@@ -1,0 +1,15 @@
+# High-value check groups for a low-latency engine. Magic-number and a couple of
+# noisy/opinionated checks are disabled so the signal stays useful.
+Checks: >
+  -*,
+  bugprone-*,
+  performance-*,
+  cppcoreguidelines-*,
+  modernize-*,
+  readability-*,
+  -readability-magic-numbers,
+  -cppcoreguidelines-avoid-magic-numbers,
+  -readability-identifier-length,
+  -modernize-use-trailing-return-type
+WarningsAsErrors: ''
+HeaderFilterRegex: 'include/dhft/.*'
