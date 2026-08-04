@@ -67,6 +67,38 @@ TEST(OrderBook, CancelOneOfTwoKeepsLevel) {
   EXPECT_EQ(b.depth(Side::Buy, 1)[0].second.v, 3); // order 2 remains
 }
 
+TEST(OrderBook, ModifyDecreaseShrinksLevel) {
+  OrderBook b;
+  b.add(Order{OrderId{1}, Side::Buy, Price{100}, Quantity{5}, Sequence{1}});
+  b.add(Order{OrderId{2}, Side::Buy, Price{100}, Quantity{5}, Sequence{2}});
+  ASSERT_TRUE(b.modify(OrderId{1}, Quantity{2}).has_value());
+  EXPECT_EQ(b.depth(Side::Buy, 1)[0].second.v, 7); // 10 -> 7
+}
+
+TEST(OrderBook, ModifyIncreaseKeepsTotal) {
+  OrderBook b;
+  b.add(Order{OrderId{1}, Side::Buy, Price{100}, Quantity{5}, Sequence{1}});
+  ASSERT_TRUE(b.modify(OrderId{1}, Quantity{9}).has_value());
+  EXPECT_EQ(b.depth(Side::Buy, 1)[0].second.v, 9);
+  EXPECT_TRUE(b.best_bid()); // still resting at the same price
+}
+
+TEST(OrderBook, ModifyUnknownRejects) {
+  OrderBook b;
+  auto r = b.modify(OrderId{999}, Quantity{5});
+  ASSERT_FALSE(r.has_value());
+  EXPECT_EQ(r.error(), RejectReason::UnknownOrder);
+}
+
+TEST(OrderBook, ModifyBadQuantityRejects) {
+  OrderBook b;
+  b.add(Order{OrderId{1}, Side::Buy, Price{100}, Quantity{5}, Sequence{1}});
+  auto r = b.modify(OrderId{1}, Quantity{0});
+  ASSERT_FALSE(r.has_value());
+  EXPECT_EQ(r.error(), RejectReason::BadQuantity);
+  EXPECT_EQ(b.depth(Side::Buy, 1)[0].second.v, 5); // untouched
+}
+
 // The iterator-stability proof: cancel the middle order, then its neighbours.
 // If the stored list iterators were invalidated, ASan would fire here.
 TEST(OrderBook, CancelMiddleThenNeighboursStaysValid) {

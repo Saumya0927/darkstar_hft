@@ -71,4 +71,26 @@ namespace dhft {
         index_.erase(it);
         return {};
     }
+
+    std::expected<void, RejectReason> OrderBook::modify(OrderId id, Quantity newQty) {
+        if (!newQty.positive())
+            return std::unexpected(RejectReason::BadQuantity);
+
+        auto it = index_.find(id);
+        if (it == index_.end())
+            return std::unexpected(RejectReason::UnknownOrder);
+
+        const Location loc = it->second;
+
+        if (newQty <= loc.node->qty) {
+            loc.node->qty = newQty;
+            return {};
+        }
+
+        Order updated = *loc.node;
+        updated.qty = newQty;
+        (void)cancel(id);
+        add(updated);
+        return {};
+    }
 }

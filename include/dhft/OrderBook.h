@@ -22,6 +22,7 @@ namespace dhft {
         [[nodiscard]] std::optional<Price> best_ask() const noexcept;
         [[nodiscard]] std::vector<std::pair<Price, Quantity>> depth(Side side, int levels) const;
         [[nodiscard]] std::expected<void, RejectReason> cancel(OrderId id);
+        [[nodiscard]] std::expected<void, RejectReason> modify(OrderId id, Quantity newQty);
 
     private:
         using Level = std::list<Order>;
