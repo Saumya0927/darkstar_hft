@@ -43,3 +43,39 @@ TEST(OrderBook, DepthReturnsTopLevelsInOrder) {
   EXPECT_EQ(d[0].first.ticks, 100); // lowest ask first
   EXPECT_EQ(d[1].first.ticks, 101);
 }
+
+TEST(OrderBook, CancelRemovesOrderAndEmptiesLevel) {
+  OrderBook b;
+  b.add(Order{OrderId{1}, Side::Buy, Price{100}, Quantity{5}, Sequence{1}});
+  ASSERT_TRUE(b.cancel(OrderId{1}).has_value());
+  EXPECT_FALSE(b.best_bid()); // last order gone -> level erased
+}
+
+TEST(OrderBook, CancelUnknownRejects) {
+  OrderBook b;
+  auto r = b.cancel(OrderId{999});
+  ASSERT_FALSE(r.has_value());
+  EXPECT_EQ(r.error(), RejectReason::UnknownOrder);
+}
+
+TEST(OrderBook, CancelOneOfTwoKeepsLevel) {
+  OrderBook b;
+  b.add(Order{OrderId{1}, Side::Buy, Price{100}, Quantity{5}, Sequence{1}});
+  b.add(Order{OrderId{2}, Side::Buy, Price{100}, Quantity{3}, Sequence{2}});
+  ASSERT_TRUE(b.cancel(OrderId{1}).has_value());
+  ASSERT_TRUE(b.best_bid());
+  EXPECT_EQ(b.depth(Side::Buy, 1)[0].second.v, 3); // order 2 remains
+}
+
+// The iterator-stability proof: cancel the middle order, then its neighbours.
+// If the stored list iterators were invalidated, ASan would fire here.
+TEST(OrderBook, CancelMiddleThenNeighboursStaysValid) {
+  OrderBook b;
+  b.add(Order{OrderId{1}, Side::Buy, Price{100}, Quantity{5}, Sequence{1}});
+  b.add(Order{OrderId{2}, Side::Buy, Price{100}, Quantity{3}, Sequence{2}});
+  b.add(Order{OrderId{3}, Side::Buy, Price{100}, Quantity{2}, Sequence{3}});
+  ASSERT_TRUE(b.cancel(OrderId{2}).has_value()); // middle
+  ASSERT_TRUE(b.cancel(OrderId{1}).has_value());
+  ASSERT_TRUE(b.cancel(OrderId{3}).has_value());
+  EXPECT_FALSE(b.best_bid()); // all gone
+}
