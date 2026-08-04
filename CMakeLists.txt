@@ -19,14 +19,13 @@ target_compile_options(dhft_options INTERFACE
 target_link_options(dhft_options INTERFACE
   $<$<CONFIG:Debug>:-fsanitize=address,undefined>)
 
-# The library. Header-only for now (Types.h/Events.h). Starting Task 3, when the first
-# .cpp appears in src/, change this to:
-#     add_library(dhft STATIC src/OrderBook.cpp src/MatchingEngine.cpp src/Feed.cpp src/Sink.cpp)
-#     target_link_libraries(dhft PUBLIC dhft_options)
-# and keep the include-dir line below.
-add_library(dhft INTERFACE)
-target_include_directories(dhft INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_link_libraries(dhft INTERFACE dhft_options)
+# The compiled library. Add each new .cpp here as the milestone progresses
+# (MatchingEngine.cpp, Feed.cpp, Sink.cpp in later tasks).
+add_library(dhft STATIC
+  src/OrderBook.cpp
+)
+target_include_directories(dhft PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(dhft PUBLIC dhft_options)
 
 # GoogleTest, fetched at configure time (no manual checkout).
 include(FetchContent)
