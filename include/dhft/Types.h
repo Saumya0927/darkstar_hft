@@ -7,6 +7,7 @@
 
 
 namespace dhft {
+
     enum class Side : std::uint8_t {Buy, Sell};
 
     struct Price {
@@ -35,6 +36,7 @@ namespace dhft {
 
     struct Order { OrderId id{}; Side side{}; Price price{}; Quantity qty{}; Sequence seq{}; };
     struct Trade { OrderId aggressor{}; OrderId resting{}; Price price{}; Quantity qty{}; };
+
 }
 
 template<>

@@ -1,5 +1,3 @@
-# High-value check groups for a low-latency engine. Magic-number and a couple of
-# noisy/opinionated checks are disabled so the signal stays useful.
 Checks: >
   -*,
   bugprone-*,
