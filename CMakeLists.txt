@@ -19,16 +19,16 @@ target_compile_options(dhft_options INTERFACE
 target_link_options(dhft_options INTERFACE
   $<$<CONFIG:Debug>:-fsanitize=address,undefined>)
 
-# The compiled library. Add each new .cpp here as the milestone progresses
-# (MatchingEngine.cpp, Feed.cpp, Sink.cpp in later tasks).
+# The core engine library: order book + matching engine. No file or stream I/O.
 add_library(dhft STATIC
   src/OrderBook.cpp
   src/MatchingEngine.cpp
-  src/Script.cpp
-  src/Sink.cpp
 )
 target_include_directories(dhft PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(dhft PUBLIC dhft_options)
+
+# Text I/O module (script parsing, human-readable output), built on the core engine.
+add_subdirectory(io)
 
 # GoogleTest, fetched at configure time (no manual checkout).
 include(FetchContent)

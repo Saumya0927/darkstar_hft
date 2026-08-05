@@ -1,8 +1,8 @@
-#include <dhft/Sink.h>
+#include <dhft/io/TextSink.h>
 
 #include <ostream>
 
-namespace dhft {
+namespace dhft::io {
 
 namespace {
 
@@ -20,7 +20,7 @@ const char* reason_text(RejectReason r) {
 
 } // namespace
 
-void PrintingSink::on_event(const OutEvent& e) {
+void TextSink::on_event(const OutEvent& e) {
     switch (e.kind) {
     case OutKind::Trade:
         out_ << "TRADE  aggressor=" << e.id.v << " resting=" << e.resting.v
@@ -35,4 +35,4 @@ void PrintingSink::on_event(const OutEvent& e) {
     }
 }
 
-} // namespace dhft
+} // namespace dhft::io

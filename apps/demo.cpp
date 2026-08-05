@@ -2,8 +2,8 @@
 //   usage: ./demo [script-file]      (default: data/scripts/simple.txt)
 #include <dhft/Feed.h>
 #include <dhft/MatchingEngine.h>
-#include <dhft/Script.h>
-#include <dhft/Sink.h>
+#include <dhft/io/Script.h>
+#include <dhft/io/TextSink.h>
 
 #include <exception>
 #include <iostream>
@@ -37,8 +37,8 @@ int main(int argc, char** argv) {
     try {
         const std::string path = (argc > 1) ? argv[1] : "data/scripts/simple.txt";
 
-        dhft::ScriptedFeed feed{dhft::parse_script_file(path)};
-        dhft::PrintingSink sink{std::cout};
+        dhft::ScriptedFeed feed{dhft::io::parse_script_file(path)};
+        dhft::io::TextSink sink{std::cout};
         dhft::MatchingEngine engine{sink};
 
         std::cout << "--- events ---\n";

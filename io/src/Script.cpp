@@ -1,11 +1,11 @@
-#include <dhft/Script.h>
+#include <dhft/io/Script.h>
 
 #include <fstream>
 #include <istream>
 #include <sstream>
 #include <stdexcept>
 
-namespace dhft {
+namespace dhft::io {
 
 namespace {
 
@@ -87,4 +87,4 @@ std::vector<InEvent> parse_script_file(const std::string& path) {
     return parse_script(in);
 }
 
-} // namespace dhft
+} // namespace dhft::io

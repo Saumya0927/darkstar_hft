@@ -1,7 +1,8 @@
 // Task 8 — end-to-end: script parsing, the full loop, and determinism.
 #include <dhft/Feed.h>
 #include <dhft/MatchingEngine.h>
-#include <dhft/Script.h>
+#include <dhft/io/Script.h>
+#include <dhft/io/TextSink.h>
 #include <dhft/Sink.h>
 #include <gtest/gtest.h>
 
@@ -26,12 +27,12 @@ C 3               # already gone -> reject
 
 std::vector<InEvent> script() {
   std::istringstream in{kScript};
-  return parse_script(in);
+  return io::parse_script(in);
 }
 
 std::string run_to_text(const std::vector<InEvent>& events) {
   std::ostringstream out;
-  PrintingSink sink{out};
+  io::TextSink sink{out};
   MatchingEngine engine{sink};
   for (const auto& e : events) {
     engine.process(e);
@@ -43,7 +44,7 @@ std::string run_to_text(const std::vector<InEvent>& events) {
 
 TEST(Script, ParsesEachOpKind) {
   std::istringstream in{"N 1 BUY 100 5\nC 1\nM 1 3\n"};
-  auto ev = parse_script(in);
+  auto ev = io::parse_script(in);
   ASSERT_EQ(ev.size(), 3u);
   EXPECT_EQ(ev[0].type, EventType::NewOrder);
   EXPECT_EQ(ev[0].side, Side::Buy);
@@ -57,14 +58,14 @@ TEST(Script, ParsesEachOpKind) {
 
 TEST(Script, IgnoresBlankLinesAndComments) {
   std::istringstream in{"\n# just a comment\n   \nN 1 SELL 100 5   # trailing comment\n"};
-  auto ev = parse_script(in);
+  auto ev = io::parse_script(in);
   ASSERT_EQ(ev.size(), 1u);
   EXPECT_EQ(ev[0].side, Side::Sell);
 }
 
 TEST(Script, RejectsMalformedLine) {
   std::istringstream in{"X 1 BUY 100 5\n"};
-  EXPECT_THROW((void)parse_script(in), std::runtime_error);
+  EXPECT_THROW((void)io::parse_script(in), std::runtime_error);
 }
 
 TEST(Integration, ScriptProducesExpectedTrades) {
