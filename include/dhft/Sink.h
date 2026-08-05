@@ -1,6 +1,8 @@
 #pragma once
 
 #include <dhft/Events.h>
+
+#include <iosfwd>
 #include <vector>
 
 
@@ -27,6 +29,16 @@ namespace dhft {
     private:
         std::vector<OutEvent> events_;
 
+    };
+
+    // Writes each event as one line of text. Deterministic: no timestamps, no addresses.
+    class PrintingSink : public Sink {
+    public:
+        explicit PrintingSink(std::ostream& out) noexcept : out_{out} {}
+        void on_event(const OutEvent& e) override;
+
+    private:
+        std::ostream& out_;
     };
 
 }

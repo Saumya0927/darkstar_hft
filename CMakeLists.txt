@@ -24,6 +24,8 @@ target_link_options(dhft_options INTERFACE
 add_library(dhft STATIC
   src/OrderBook.cpp
   src/MatchingEngine.cpp
+  src/Script.cpp
+  src/Sink.cpp
 )
 target_include_directories(dhft PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(dhft PUBLIC dhft_options)
@@ -39,6 +41,4 @@ FetchContent_MakeAvailable(googletest)
 
 enable_testing()
 add_subdirectory(test)
-
-# apps/ (the demo) is added in Task 8:
-#   add_subdirectory(apps)
+add_subdirectory(apps)

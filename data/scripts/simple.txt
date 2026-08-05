@@ -1,0 +1,25 @@
+# Order script: N <id> <BUY|SELL> <price> <qty> | C <id> | M <id> <qty>
+
+# build a two-sided book
+N 1 BUY  99  5
+N 2 BUY  100 3
+N 3 SELL 102 4
+N 4 SELL 103 6
+
+# a second order joins the queue at 100 (behind #2)
+N 5 BUY  100 7
+
+# aggressive sell crosses into the bids: takes 3 from #2 (oldest at 100), then 2 from #5
+N 6 SELL 100 5
+
+# cancel a resting ask
+C 4
+
+# shrink an order (keeps its queue position)
+M 5 2
+
+# aggressive buy sweeps the remaining ask at 102 and rests the leftover at 102
+N 7 BUY  102 9
+
+# cancelling something that no longer exists -> reject
+C 4
