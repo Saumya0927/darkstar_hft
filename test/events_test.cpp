@@ -1,4 +1,3 @@
-// Task 2 — Events.h: InEvent / OutEvent as plain, trivially-copyable messages.
 #include <dhft/Events.h>
 #include <gtest/gtest.h>
 

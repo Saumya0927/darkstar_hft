@@ -1,4 +1,3 @@
-// Task 1 — Side, Price, Quantity (1a) + OrderId, Sequence, Order, Trade (1b).
 #include <dhft/Types.h>
 #include <gtest/gtest.h>
 
@@ -26,7 +25,6 @@ TEST(Types, QuantityPositive) {
   EXPECT_FALSE(Quantity{-2}.positive());
 }
 
-// ---- pass 1b ----
 
 TEST(Types, OrderIdEquality) {
   EXPECT_TRUE(OrderId{7} == OrderId{7});

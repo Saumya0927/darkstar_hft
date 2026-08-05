@@ -1,4 +1,3 @@
-// Task 3 — OrderBook: add + best_bid/best_ask (pass 3a). depth added in 3b.
 #include <dhft/OrderBook.h>
 #include <gtest/gtest.h>
 
@@ -12,9 +11,9 @@ TEST(OrderBook, AddRestsAndReportsBest) {
   b.add(Order{OrderId{4}, Side::Sell, Price{102}, Quantity{5}, Sequence{4}});
 
   ASSERT_TRUE(b.best_bid());
-  EXPECT_EQ(b.best_bid()->ticks, 100); // highest bid is best
+  EXPECT_EQ(b.best_bid()->ticks, 100);
   ASSERT_TRUE(b.best_ask());
-  EXPECT_EQ(b.best_ask()->ticks, 101); // lowest ask is best
+  EXPECT_EQ(b.best_ask()->ticks, 101);
 }
 
 TEST(OrderBook, EmptyBookHasNoBest) {
@@ -48,7 +47,7 @@ TEST(OrderBook, CancelRemovesOrderAndEmptiesLevel) {
   OrderBook b;
   b.add(Order{OrderId{1}, Side::Buy, Price{100}, Quantity{5}, Sequence{1}});
   ASSERT_TRUE(b.cancel(OrderId{1}).has_value());
-  EXPECT_FALSE(b.best_bid()); // last order gone -> level erased
+  EXPECT_FALSE(b.best_bid());
 }
 
 TEST(OrderBook, CancelUnknownRejects) {
@@ -72,7 +71,7 @@ TEST(OrderBook, ModifyDecreaseShrinksLevel) {
   b.add(Order{OrderId{1}, Side::Buy, Price{100}, Quantity{5}, Sequence{1}});
   b.add(Order{OrderId{2}, Side::Buy, Price{100}, Quantity{5}, Sequence{2}});
   ASSERT_TRUE(b.modify(OrderId{1}, Quantity{2}).has_value());
-  EXPECT_EQ(b.depth(Side::Buy, 1)[0].second.v, 7); // 10 -> 7
+  EXPECT_EQ(b.depth(Side::Buy, 1)[0].second.v, 7);
 }
 
 TEST(OrderBook, ModifyIncreaseKeepsTotal) {
@@ -99,8 +98,6 @@ TEST(OrderBook, ModifyBadQuantityRejects) {
   EXPECT_EQ(b.depth(Side::Buy, 1)[0].second.v, 5); // untouched
 }
 
-// The iterator-stability proof: cancel the middle order, then its neighbours.
-// If the stored list iterators were invalidated, ASan would fire here.
 TEST(OrderBook, CancelMiddleThenNeighboursStaysValid) {
   OrderBook b;
   b.add(Order{OrderId{1}, Side::Buy, Price{100}, Quantity{5}, Sequence{1}});
