@@ -37,11 +37,47 @@ The assistant does not write the user's core code. Reviewing and correcting it i
 
 ## Scope
 
-**In scope:** invariant validation, golden-file regression tests, property-based
-randomized testing, and a brute-force reference model with an equivalence test.
+**In scope:** one prerequisite fix to M1 (below), invariant validation, golden-file
+regression tests, property-based randomized testing, and a brute-force reference model
+with an equivalence test.
 
 **Out of scope (deferred to M3):** benchmarking, latency measurement, and all
 optimization. Also out of scope: new order types, threading, real market data.
+
+---
+
+## Prerequisite: fix sequence semantics on requeue
+
+**This must land before Layer 4, and it changes M1 code.**
+
+`OrderBook::modify` currently handles a quantity increase by copying the resting order,
+cancelling it, and re-adding it at the back of the level. The copy retains the order's
+**original** `Sequence`. Measured result: after adding orders with sequences 1, 2, 3 at
+one price and increasing the first, the level reads front-to-back as seq 2, 3, 1 — list
+position and sequence number disagree.
+
+Today this is latent: `MatchingEngine` derives FIFO from *list position*, and never reads
+`seq`. It becomes fatal in Layer 4. `NaiveEngine` stores everything in one flat
+`std::vector` with no per-level list, so its only expression of time priority is *lowest
+`seq` at that price*. With the two engines disagreeing about who is at the front of a
+level, the equivalence test reports divergence on correct code.
+
+**Resolution:** an order that loses queue position must receive a fresh, higher sequence.
+This also matches real exchange behaviour — losing your place in the queue means your
+effective arrival time is now. `OrderBook` does not own a sequence counter, so the
+signature becomes:
+
+```cpp
+[[nodiscard]] std::expected<void, RejectReason> modify(OrderId id, Quantity newQty,
+                                                       Sequence newSeq);
+```
+
+`MatchingEngine` passes `next_` and advances it. A quantity *decrease* keeps both the
+position and the original sequence; only the increase path re-stamps.
+
+After this change, "within a level, `seq` is strictly ascending" becomes true and is
+checkable — it is the invariant that directly tests time priority, and the reason
+`Sequence` is stored on each order.
 
 ---
 
@@ -99,25 +135,43 @@ returns rather than aborts so tests can assert on it and so callers choose the p
 `DHFT_CHECK(book.validate().has_value())` is the aborting form.
 
 It must be a member because the invariants span private state (`bids_`, `asks_`,
-`index_`).
+`index_`). Adding it requires `#include <string>` in `OrderBook.h`.
 
-**Invariants checked:**
+**Structural invariants checked** (all are properties the container itself must maintain,
+regardless of who is driving it):
 
-1. **Not crossed.** If both sides are non-empty, `best_bid < best_ask`.
-2. **No empty levels.** Every level present in either map has a non-empty order list.
-3. **Positive quantities.** Every resting order has `qty > 0`.
-4. **Index completeness.** `index_.size()` equals the total number of orders across all
+1. **No empty levels.** Every level present in either map has a non-empty order list.
+2. **Positive quantities.** Every resting order has `qty > 0`.
+3. **Index completeness.** `index_.size()` equals the total number of orders across all
    levels of both sides.
-5. **Index correctness.** For every order in every level, `index_` contains its id, and
-   that entry's `side`, `price`, and node all match where the order actually sits.
-6. **Field agreement.** Every order's `price` equals its level's price, and its `side`
+4. **Index correctness.** For every order in every level, `index_` contains its id, and
+   that entry's `side`, `price`, and node all refer to where the order actually sits.
+5. **Field agreement.** Every order's `price` equals its level's price, and its `side`
    matches which map it is in.
-7. **FIFO integrity.** Within a level, orders appear in strictly ascending `seq` order.
+6. **FIFO integrity.** Within a level, orders appear in strictly ascending `seq` order.
+   Depends on the prerequisite fix above; without it this is false after a modify-increase.
 
-Invariant 7 is the one that directly tests time priority, and is the reason `Sequence`
-is stored on each order.
+**Deliberately NOT checked here: "the book is not crossed."** `OrderBook` is a passive
+container with no matching logic — a caller may legitimately add a bid above an ask, and
+`orderbook_test` uses the book directly. Non-crossing is a guarantee of the *matching
+algorithm*, so it is asserted at the engine level in Layer 3, not inside `validate()`.
+
+**Implementation note.** `validate()` is `const`, so iterating the maps yields
+`const_iterator`s while `Location::node` is a non-const `Level::iterator`. Comparing
+element *addresses* (`&*loc.node == &order`) is the simplest way to satisfy invariant 4
+without const gymnastics.
 
 Cost is O(total orders), so it is a test-time tool, not something the hot path calls.
+
+### `OrderBook::total_quantity()`
+
+```cpp
+[[nodiscard]] Quantity total_quantity(Side side) const noexcept;
+```
+
+Sums the resting quantity across every level on a side. Required by property P4
+(conservation) in Layer 3, which has no other way to read the book's total —
+`depth(side, n)` reports only the top `n` levels.
 
 ---
 
@@ -134,7 +188,9 @@ the standard workflow — after an intentional behavior change you regenerate, t
 the diff in `git diff` to confirm the change is what you meant.
 
 **Book dumping:** `dhft_io` gains `dump_book(const OrderBook&, std::ostream&)` so the
-golden captures final state, not just the event stream. The demo app reuses it.
+golden captures final state, not just the event stream. `apps/demo.cpp` currently has its
+own `print_book` in an anonymous namespace; that function moves into `dhft_io` and the
+demo calls the shared one, so the demo and the goldens can never drift apart.
 
 Golden scripts to include: a basic two-sided book, a multi-level sweep, a cancel/modify
 sequence, an all-cross liquidation, and an edge-case script (cancel unknown, modify to
@@ -169,18 +225,27 @@ exactly. On failure, tests print the seed.
 
 ### Properties asserted
 
-Over many random scripts:
+Over many random scripts. Note that `OutEvent` carries neither the aggressor's limit
+price nor the original order size, so the property checks correlate the **output stream
+against the generated input stream** — the test holds both.
 
 - **P1 — Invariants.** `validate()` succeeds after every single event.
 - **P2 — No over-fill.** No order's cumulative traded quantity exceeds the quantity it
-  was submitted with (accounting for modifies).
-- **P3 — Limit respected.** Every trade price satisfies the aggressor's limit: for a buy
-  aggressor `trade.price <= limit`, for a sell `trade.price >= limit`.
+  was submitted with (adjusted by any modify). Each `Trade` fills **two** orders — the
+  aggressor (`OutEvent::id`) and the resting order (`OutEvent::resting`) — so both ids
+  accumulate `trade.qty`.
+- **P3 — Limit respected.** Every trade price satisfies the aggressor's limit, taken from
+  the originating `InEvent`: for a buy aggressor `trade.price <= limit`, for a sell
+  `trade.price >= limit`.
 - **P4 — Quantity conservation.** Track expected total resting quantity incrementally
   (adds increase it, fills and cancels decrease it, modifies adjust it) and assert it
-  equals the book's actual total after every event. Nothing is created or lost.
+  equals `total_quantity(Buy) + total_quantity(Sell)` after every event. Nothing is
+  created or lost.
 - **P5 — Determinism.** The same generated script run twice produces byte-identical
   output.
+- **P6 — Book never crosses.** After every event, if both sides are non-empty,
+  `best_bid < best_ask`. (Lives here rather than in `validate()` because it is a property
+  of the matching algorithm, not of the container.)
 
 ---
 
@@ -196,11 +261,15 @@ A second matching engine that is deliberately slow and obviously correct:
     best price   -> linear scan for min/max on the relevant side
     front at px  -> linear scan for the lowest seq at that price
     cancel       -> linear scan, erase
-    modify       -> linear scan, adjust in place or erase+push_back
+    modify       -> linear scan; decrease adjusts in place, increase re-stamps seq
 ```
 
 No index, no maps, no iterator tricks. It is O(n) everywhere and it does not matter. Its
 only job is to be so simple that it is hard to get wrong.
+
+Because it has no per-level list, **time priority is expressed purely as "lowest `seq` at
+that price."** This is precisely why the prerequisite sequence fix is required: without
+it, the two engines would disagree about queue order after any modify-increase.
 
 It emits the same `OutEvent` stream into the same `Sink` interface, so both engines are
 driven identically.
@@ -258,9 +327,18 @@ New test executables:
 - `validate_test` — `validate()` accepts a well-formed book; each invariant is exercised
   by a scripted sequence that would violate it if the engine were wrong.
 - `golden_test` — every `.script`/`.expected` pair matches.
-- `property_test` — P1 through P5 over many seeds.
+- `property_test` — P1 through P6 over many seeds.
+- `reference_test` — the reference model alone satisfies the same matching semantics as
+  the M1 suite. `matching_test.cpp` names `MatchingEngine` concretely, so it cannot be
+  reused as-is; either convert it to a gtest `TYPED_TEST` over both engine types, or
+  duplicate the cases in a dedicated file. Typed tests are preferred — one set of
+  semantics, two implementations.
 - `equivalence_test` — fast engine and reference agree on golden scripts and on many
   random scripts.
+
+`test/CMakeLists.txt`'s `dhft_add_test` helper currently forwards `ARGN` as link
+libraries only; it needs extending so `golden_test` can receive the golden-directory path
+via `target_compile_definitions`.
 
 All continue to run under AddressSanitizer and UndefinedBehaviorSanitizer.
 
@@ -282,12 +360,14 @@ All continue to run under AddressSanitizer and UndefinedBehaviorSanitizer.
 
 ## Success criteria
 
-1. `validate()` passes after every event of every test, golden, and random script.
-2. Golden files exist for at least five scripts and all match; `DHFT_UPDATE_GOLDEN=1`
+1. The prerequisite sequence fix is in, and `modify`-increase re-stamps the sequence so
+   list position and `seq` agree.
+2. `validate()` passes after every event of every test, golden, and random script.
+3. Golden files exist for at least five scripts and all match; `DHFT_UPDATE_GOLDEN=1`
    regenerates them.
-3. Property tests run at least 500 random scripts with all five properties holding.
-4. The fast engine and the reference model produce identical output on every golden
+4. Property tests run at least 500 random scripts with all six properties holding.
+5. The fast engine and the reference model produce identical output on every golden
    script and on at least 500 random scripts.
-5. Everything clean under ASan and UBSan.
-6. **The user wrote `validate()`, the properties, and the reference model**, and can
-   explain each.
+6. Everything clean under ASan and UBSan.
+7. **The user wrote the sequence fix, `validate()`, `total_quantity()`, the properties,
+   and the reference model**, and can explain each.

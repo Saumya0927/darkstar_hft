@@ -33,6 +33,39 @@ dhft_testkit    generator/golden  NEW, test-only
 
 ---
 
+## Task 0: Sequence fix on requeue   [USER] — prerequisite, must land before T6
+
+**Why:** `modify`-increase currently copies the resting order (retaining its original
+`Sequence`), cancels it, and re-adds it at the back. Measured: orders added with seq
+1, 2, 3 at one price, then increasing the first, leave the level reading front-to-back as
+seq 2, 3, 1. List position and sequence disagree.
+
+Harmless today — `MatchingEngine` derives FIFO from list position and never reads `seq`.
+Fatal in T6: `NaiveEngine` has no per-level list, so its only expression of time priority
+is *lowest `seq` at that price*. The two engines would pick different counterparties after
+any modify-increase, and the equivalence test would fail on correct code.
+
+**Deliverable:** an order that loses queue position gets a fresh, higher sequence — which
+is also what real exchanges do (lose your place, your arrival time is now).
+
+```cpp
+[[nodiscard]] std::expected<void, RejectReason> modify(OrderId id, Quantity newQty,
+                                                       Sequence newSeq);
+```
+`MatchingEngine::process` passes `next_` and advances it. Decrease keeps position and
+sequence; only the increase path re-stamps.
+
+**C++ you learn:** how a latent inconsistency in stored state stays invisible until a
+second consumer reads it differently — and why "unused field" is not the same as
+"harmless field."
+
+**Assistant provides:** an updated `orderbook_test` case asserting that after a
+modify-increase the level's sequences are strictly ascending front-to-back.
+
+**Done when:** all 46 existing tests still pass with the new signature.
+
+---
+
 ## Task 1: `Check.h` — the assertion macro   [ASSISTANT]
 
 **Deliverable:** `include/dhft/Check.h` with `DHFT_CHECK(cond)` and
@@ -48,26 +81,42 @@ read and modify it.
 
 ---
 
-## Task 2: `OrderBook::validate()`   [USER]
+## Task 2: `OrderBook::validate()` and `total_quantity()`   [USER]
 
-**Deliverable:**
+**Deliverable A:**
 ```cpp
 [[nodiscard]] std::expected<void, std::string> validate() const;
 ```
-Returns success, or a description of the first violation.
+Returns success, or a description of the first violation. Requires adding
+`#include <string>` to `OrderBook.h`.
+
+**Deliverable B:**
+```cpp
+[[nodiscard]] Quantity total_quantity(Side side) const noexcept;
+```
+Sums resting quantity across every level on a side. Property P4 needs it — `depth(side,n)`
+only reports the top `n` levels, so there is currently no way to read the book's total.
 
 **Concept:** an invariant is a statement that must be true of the book's state at all
 times, no matter what sequence of events led there. Checking them after every event turns
 "wrong answer six events later" into "abort at the event that broke it."
 
-**The seven invariants** (each becomes a check in the body):
-1. Not crossed — if both sides non-empty, `best_bid < best_ask`.
-2. No empty levels in either map.
-3. Every resting order has `qty > 0`.
-4. `index_.size()` equals the total order count across all levels.
-5. Every order in every level has an `index_` entry whose side/price/node match.
-6. Every order's `price` matches its level, and `side` matches which map it is in.
-7. Within a level, `seq` is strictly ascending (FIFO integrity).
+**The six structural invariants** (each becomes a check in the body):
+1. No empty levels in either map.
+2. Every resting order has `qty > 0`.
+3. `index_.size()` equals the total order count across all levels.
+4. Every order in every level has an `index_` entry whose side, price, and node match.
+5. Every order's `price` matches its level, and `side` matches which map it is in.
+6. Within a level, `seq` is strictly ascending (FIFO integrity) — true only after Task 0.
+
+**Not checked here: "the book is not crossed."** `OrderBook` is a passive container with
+no matching logic; a caller may legitimately add a bid above an ask, and `orderbook_test`
+uses the book directly. Non-crossing is a guarantee of the matching *algorithm*, so it
+becomes property P6 in Task 5.
+
+**Implementation hint:** `validate()` is `const`, so iterating the maps gives
+`const_iterator`s while `Location::node` is a plain `Level::iterator`. Comparing element
+addresses (`&*loc.node == &order`) sidesteps the const mismatch for invariant 4.
 
 **C++ you learn:** nested container traversal, cross-referencing two structures,
 `std::expected` carrying a `std::string` payload, building diagnostic messages,
@@ -85,7 +134,12 @@ existing integration test without firing.
 ## Task 3: Golden-file regression harness   [ASSISTANT]
 
 **Deliverable:**
-- `dhft_io` gains `dump_book(const OrderBook&, std::ostream&)`; the demo reuses it.
+- `dhft_io` gains `dump_book(const OrderBook&, std::ostream&)`. `apps/demo.cpp`'s private
+  `print_book` moves there and the demo calls the shared one, so demo output and goldens
+  cannot drift apart.
+- `dhft_add_test` in `test/CMakeLists.txt` is extended to accept compile definitions (it
+  currently forwards `ARGN` as link libraries only), so the golden directory path can be
+  injected.
 - `dhft_testkit` gains a golden runner: run a `.script`, capture events + final book,
   compare to `.expected`, or rewrite it when `DHFT_UPDATE_GOLDEN=1` is set.
 - `test/golden/` gains at least five script/expected pairs: basic two-sided book,
@@ -128,14 +182,24 @@ differ; generated scripts are mostly-valid (few rejects).
 stop asserting "this script gives these trades" and start asserting "no matter what
 happens, quantity is conserved."
 
-**The five properties:**
+`OutEvent` carries neither the aggressor's limit price nor the original order size, so the
+checks correlate the **output stream against the generated input stream** — the test holds
+both.
+
+**The six properties:**
 - **P1 Invariants** — `validate()` succeeds after every event.
-- **P2 No over-fill** — no order's cumulative fills exceed its submitted quantity.
-- **P3 Limit respected** — buy aggressor: `trade.price <= limit`; sell: `>= limit`.
+- **P2 No over-fill** — no order's cumulative fills exceed its submitted quantity. Each
+  `Trade` fills **two** orders — the aggressor (`OutEvent::id`) and the resting order
+  (`OutEvent::resting`) — so both ids accumulate `trade.qty`.
+- **P3 Limit respected** — using the limit from the originating `InEvent`: buy aggressor
+  `trade.price <= limit`; sell `trade.price >= limit`.
 - **P4 Conservation** — maintain an expected total resting quantity (adds add, fills and
-  cancels subtract, modifies adjust) and assert it matches the book's actual total after
-  every event.
+  cancels subtract, modifies adjust) and assert it equals
+  `total_quantity(Buy) + total_quantity(Sell)` after every event.
 - **P5 Determinism** — the same script twice produces byte-identical output.
+- **P6 Never crossed** — after every event, if both sides are non-empty,
+  `best_bid < best_ask`. (Here rather than in `validate()`: it is a property of the
+  matching algorithm, not of the container.)
 
 **C++ you learn:** accounting logic across an event stream, `std::unordered_map` for
 per-id bookkeeping, writing assertions that quantify over all inputs, and reporting the
@@ -144,7 +208,7 @@ seed on failure so any bug replays exactly.
 **Assistant provides:** the test scaffold (seed loop, engine setup, failure reporting).
 The user writes the property checks themselves.
 
-**Done when:** 500+ random scripts pass all five properties.
+**Done when:** 500+ random scripts pass all six properties.
 
 ---
 
@@ -161,8 +225,11 @@ std::vector<Order> resting_;
 - best price on a side: linear scan for min (asks) or max (bids)
 - front at a price: linear scan for the lowest `seq` at that price
 - cancel: linear scan, erase
-- modify: linear scan, adjust in place, or erase and push_back on increase
+- modify: linear scan; decrease adjusts in place, increase re-stamps `seq` (Task 0)
 - matching: the same price-time algorithm as `MatchingEngine`, emitting into a `Sink&`
+
+Time priority here is expressed **purely by `seq`**, since there is no per-level list.
+That is exactly why Task 0 must land first.
 
 **Concept — the test oracle.** You deliberately write the *stupid* implementation. No
 index, no maps, O(n) everywhere. Its only job is to be so simple it is obviously right.
@@ -174,10 +241,13 @@ rewrite preserved behavior.
 iterator invalidation (a deliberate contrast with M1's `std::list` choice), and the
 discipline of writing intentionally unoptimized code.
 
-**Assistant provides:** the failing test — the reference model alone must pass the same
-matching semantics tests the fast engine passes.
+**Assistant provides:** `test/reference_test.cpp`. Note `matching_test.cpp` names
+`MatchingEngine` concretely and cannot be reused as-is; the assistant converts the M1
+matching cases into a gtest `TYPED_TEST` suite parameterised over both engine types, so
+one set of semantics tests both implementations.
 
-**Done when:** the reference model passes the M1 matching test suite on its own.
+**Done when:** the reference model passes the same matching-semantics suite the fast
+engine passes.
 
 ---
 
@@ -206,12 +276,19 @@ between "something broke somewhere" and a debuggable case.
 
 ## Self-review
 
-- **Spec coverage:** Layer 1 -> T1/T2, Layer 2 -> T3, Layer 3 -> T4/T5, Layer 4 -> T6/T7.
-  All four success criteria map to a task. T8 is explicitly optional.
-- **Split honored:** user owns T2, T5, T6 (and optional T8) — validate, properties,
-  reference model. Assistant owns T1, T3, T4, T7 and all CMake.
+- **Spec coverage:** prerequisite -> T0, Layer 1 -> T1/T2, Layer 2 -> T3, Layer 3 ->
+  T4/T5, Layer 4 -> T6/T7. All seven success criteria map to a task. T8 is optional.
+- **Split honored:** user owns T0, T2, T5, T6 (and optional T8) — the sequence fix,
+  validate/total_quantity, the properties, the reference model. Assistant owns T1, T3,
+  T4, T7, the typed-test conversion, and all CMake.
 - **Coach adaptation:** implementations for user tasks are intentionally withheld; each
   ships a concept, an interface, and a failing test. This is by design, not a gap.
-- **Naming consistency:** `validate()`, `dump_book()`, `generate()`, `GenConfig`,
-  `NaiveEngine`, `DHFT_CHECK` used identically across tasks and the spec.
+- **Naming consistency:** `validate()`, `total_quantity()`, `dump_book()`, `generate()`,
+  `GenConfig`, `NaiveEngine`, `DHFT_CHECK` used identically across tasks and the spec.
+  `modify` carries the three-argument signature in T0, T6, and the spec.
+- **Verified against the code, not assumed:** the sequence/list-position divergence was
+  reproduced with a probe program before being written up; the absence of a
+  total-quantity accessor, the missing `<string>` include, `matching_test`'s concrete use
+  of `MatchingEngine`, `demo.cpp`'s private `print_book`, and `dhft_add_test`'s
+  libraries-only signature were each confirmed by reading the current source.
 - **Scope:** benchmarking and all optimization deferred to M3 per the agreed decision.
