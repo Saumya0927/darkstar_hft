@@ -23,6 +23,7 @@ namespace dhft {
         [[nodiscard]] std::vector<std::pair<Price, Quantity>> depth(Side side, int levels) const;
         [[nodiscard]] std::expected<void, RejectReason> cancel(OrderId id);
         [[nodiscard]] std::expected<void, RejectReason> modify(OrderId id, Quantity newQty);
+        [[nodiscard]] const Order* front_at(Side side, Price price) const noexcept;
 
     private:
         using Level = std::list<Order>;

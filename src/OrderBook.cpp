@@ -93,4 +93,18 @@ namespace dhft {
         add(updated);
         return {};
     }
+
+    const Order* OrderBook::front_at(Side side, Price price) const noexcept {
+        if (side == Side::Buy) {
+            auto it = bids_.find(price);
+            if (it == bids_.end())
+                return nullptr;
+            return &(it->second.front());
+        } else {
+            auto it = asks_.find(price);
+            if (it == asks_.end())
+                return nullptr;
+            return &(it->second.front());
+        }
+    }
 }

@@ -23,6 +23,7 @@ target_link_options(dhft_options INTERFACE
 # (MatchingEngine.cpp, Feed.cpp, Sink.cpp in later tasks).
 add_library(dhft STATIC
   src/OrderBook.cpp
+  src/MatchingEngine.cpp
 )
 target_include_directories(dhft PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(dhft PUBLIC dhft_options)
