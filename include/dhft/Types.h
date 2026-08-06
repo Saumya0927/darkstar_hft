@@ -43,12 +43,6 @@ namespace dhft {
 template<>
 struct std::hash<dhft::OrderId> {
     [[nodiscard]] std::size_t operator()(const dhft::OrderId& id) const noexcept {
-        std::uint64_t x = id.v;
-        x ^= x >> 33;
-        x *= 0xff51afd7ed558ccdULL;
-        x ^= x >> 33;
-        x *= 0xc4ceb9fe1a85ec53ULL;
-        x ^= x >> 33;
-        return static_cast<std::size_t>(x);
+        return std::hash<std::uint64_t>{}(id.v);
     }
 };

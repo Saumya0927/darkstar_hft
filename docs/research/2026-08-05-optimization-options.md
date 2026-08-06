@@ -21,6 +21,15 @@ not). Decide this before optimising a container that might be deleted.
 
 ## 1. Hash maps (replacing `std::unordered_map` for `index_`)
 
+**MEASURED 2026-08-05 — do NOT mix the hash while `std::unordered_map` is in use.**
+libc++ sizes its bucket array to a *prime* (102877 for 100k elements). With identity
+hashing, sequential `OrderId`s land in distinct buckets: 100000 buckets used, worst chain
+1. Adding a murmur3 finalizer randomises them and, by the birthday paradox, *creates*
+collisions: 63813 buckets used, worst chain 7, and a measured 7.7% loss in engine
+throughput. A mixed hash is only correct for a **power-of-two open-addressing** table.
+Ship the mixing together with the map swap, never before it.
+
+
 **No cross-library hash-map benchmark exists on ARM64.** Every credible comparative
 benchmark found (martinus' 29-map suite 2022, Boost's Bannalia post, JacksonAllan's
 suite) is x86-only. Published rankings do not transfer to Apple Silicon. The ARM paths
