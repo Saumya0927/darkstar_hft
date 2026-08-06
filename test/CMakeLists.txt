@@ -22,6 +22,7 @@ dhft_add_test(property_test    dhft_testkit)  # Task 5
 dhft_add_test(reference_test   dhft_reference)  # Task 6
 dhft_add_test(equivalence_test dhft_testkit dhft_reference)  # Task 7
 dhft_add_test(shrink_test      dhft_testkit)  # Task 8
+dhft_add_test(bench_test       dhft_bench dhft_testkit)  # M3 Task 1
 target_compile_definitions(equivalence_test PRIVATE
   DHFT_GOLDEN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/golden")
 target_compile_definitions(golden_test PRIVATE

@@ -58,6 +58,9 @@ add_subdirectory(io)
 add_subdirectory(reference)
 add_subdirectory(testkit)
 
+# Measurement harness (Milestone 3).
+add_subdirectory(bench)
+
 # GoogleTest, fetched at configure time (no manual checkout).
 include(FetchContent)
 FetchContent_Declare(
