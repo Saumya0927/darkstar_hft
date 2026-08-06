@@ -3,12 +3,18 @@
 
 using namespace dhft;
 
+namespace {
+
+void mustAdd(OrderBook& b, const Order& o) { ASSERT_TRUE(b.add(o).has_value()); }
+
+} // namespace
+
 TEST(OrderBook, AddRestsAndReportsBest) {
   OrderBook b;
-  b.add(Order{OrderId{1}, Side::Buy, Price{100}, Quantity{5}, Sequence{1}});
-  b.add(Order{OrderId{2}, Side::Buy, Price{99}, Quantity{5}, Sequence{2}});
-  b.add(Order{OrderId{3}, Side::Sell, Price{101}, Quantity{5}, Sequence{3}});
-  b.add(Order{OrderId{4}, Side::Sell, Price{102}, Quantity{5}, Sequence{4}});
+  mustAdd(b, Order{OrderId{1}, Side::Buy, Price{100}, Quantity{5}, Sequence{1}});
+  mustAdd(b, Order{OrderId{2}, Side::Buy, Price{99}, Quantity{5}, Sequence{2}});
+  mustAdd(b, Order{OrderId{3}, Side::Sell, Price{101}, Quantity{5}, Sequence{3}});
+  mustAdd(b, Order{OrderId{4}, Side::Sell, Price{102}, Quantity{5}, Sequence{4}});
 
   ASSERT_TRUE(b.best_bid());
   EXPECT_EQ(b.best_bid()->ticks, 100);
@@ -24,8 +30,8 @@ TEST(OrderBook, EmptyBookHasNoBest) {
 
 TEST(OrderBook, DepthAggregatesLevel) {
   OrderBook b;
-  b.add(Order{OrderId{1}, Side::Buy, Price{100}, Quantity{5}, Sequence{1}});
-  b.add(Order{OrderId{2}, Side::Buy, Price{100}, Quantity{3}, Sequence{2}});
+  mustAdd(b, Order{OrderId{1}, Side::Buy, Price{100}, Quantity{5}, Sequence{1}});
+  mustAdd(b, Order{OrderId{2}, Side::Buy, Price{100}, Quantity{3}, Sequence{2}});
   auto d = b.depth(Side::Buy, 1);
   ASSERT_EQ(d.size(), 1u);
   EXPECT_EQ(d[0].first.ticks, 100);
@@ -34,9 +40,9 @@ TEST(OrderBook, DepthAggregatesLevel) {
 
 TEST(OrderBook, DepthReturnsTopLevelsInOrder) {
   OrderBook b;
-  b.add(Order{OrderId{1}, Side::Sell, Price{102}, Quantity{2}, Sequence{1}});
-  b.add(Order{OrderId{2}, Side::Sell, Price{100}, Quantity{5}, Sequence{2}});
-  b.add(Order{OrderId{3}, Side::Sell, Price{101}, Quantity{4}, Sequence{3}});
+  mustAdd(b, Order{OrderId{1}, Side::Sell, Price{102}, Quantity{2}, Sequence{1}});
+  mustAdd(b, Order{OrderId{2}, Side::Sell, Price{100}, Quantity{5}, Sequence{2}});
+  mustAdd(b, Order{OrderId{3}, Side::Sell, Price{101}, Quantity{4}, Sequence{3}});
   auto d = b.depth(Side::Sell, 2);
   ASSERT_EQ(d.size(), 2u);
   EXPECT_EQ(d[0].first.ticks, 100);
@@ -45,7 +51,7 @@ TEST(OrderBook, DepthReturnsTopLevelsInOrder) {
 
 TEST(OrderBook, CancelRemovesOrderAndEmptiesLevel) {
   OrderBook b;
-  b.add(Order{OrderId{1}, Side::Buy, Price{100}, Quantity{5}, Sequence{1}});
+  mustAdd(b, Order{OrderId{1}, Side::Buy, Price{100}, Quantity{5}, Sequence{1}});
   ASSERT_TRUE(b.cancel(OrderId{1}).has_value());
   EXPECT_FALSE(b.best_bid());
 }
@@ -59,8 +65,8 @@ TEST(OrderBook, CancelUnknownRejects) {
 
 TEST(OrderBook, CancelOneOfTwoKeepsLevel) {
   OrderBook b;
-  b.add(Order{OrderId{1}, Side::Buy, Price{100}, Quantity{5}, Sequence{1}});
-  b.add(Order{OrderId{2}, Side::Buy, Price{100}, Quantity{3}, Sequence{2}});
+  mustAdd(b, Order{OrderId{1}, Side::Buy, Price{100}, Quantity{5}, Sequence{1}});
+  mustAdd(b, Order{OrderId{2}, Side::Buy, Price{100}, Quantity{3}, Sequence{2}});
   ASSERT_TRUE(b.cancel(OrderId{1}).has_value());
   ASSERT_TRUE(b.best_bid());
   EXPECT_EQ(b.depth(Side::Buy, 1)[0].second.v, 3);
@@ -68,15 +74,15 @@ TEST(OrderBook, CancelOneOfTwoKeepsLevel) {
 
 TEST(OrderBook, ModifyDecreaseShrinksLevel) {
   OrderBook b;
-  b.add(Order{OrderId{1}, Side::Buy, Price{100}, Quantity{5}, Sequence{1}});
-  b.add(Order{OrderId{2}, Side::Buy, Price{100}, Quantity{5}, Sequence{2}});
+  mustAdd(b, Order{OrderId{1}, Side::Buy, Price{100}, Quantity{5}, Sequence{1}});
+  mustAdd(b, Order{OrderId{2}, Side::Buy, Price{100}, Quantity{5}, Sequence{2}});
   ASSERT_TRUE(b.modify(OrderId{1}, Quantity{2}, Sequence{50}).has_value());
   EXPECT_EQ(b.depth(Side::Buy, 1)[0].second.v, 7);
 }
 
 TEST(OrderBook, ModifyIncreaseKeepsTotal) {
   OrderBook b;
-  b.add(Order{OrderId{1}, Side::Buy, Price{100}, Quantity{5}, Sequence{1}});
+  mustAdd(b, Order{OrderId{1}, Side::Buy, Price{100}, Quantity{5}, Sequence{1}});
   ASSERT_TRUE(b.modify(OrderId{1}, Quantity{9}, Sequence{50}).has_value());
   EXPECT_EQ(b.depth(Side::Buy, 1)[0].second.v, 9);
   EXPECT_TRUE(b.best_bid());
@@ -91,7 +97,7 @@ TEST(OrderBook, ModifyUnknownRejects) {
 
 TEST(OrderBook, ModifyBadQuantityRejects) {
   OrderBook b;
-  b.add(Order{OrderId{1}, Side::Buy, Price{100}, Quantity{5}, Sequence{1}});
+  mustAdd(b, Order{OrderId{1}, Side::Buy, Price{100}, Quantity{5}, Sequence{1}});
   auto r = b.modify(OrderId{1}, Quantity{0}, Sequence{50});
   ASSERT_FALSE(r.has_value());
   EXPECT_EQ(r.error(), RejectReason::BadQuantity);
@@ -100,9 +106,9 @@ TEST(OrderBook, ModifyBadQuantityRejects) {
 
 TEST(OrderBook, ModifyIncreaseRestampsSequence) {
   OrderBook b;
-  b.add(Order{OrderId{1}, Side::Buy, Price{100}, Quantity{5}, Sequence{1}});
-  b.add(Order{OrderId{2}, Side::Buy, Price{100}, Quantity{5}, Sequence{2}});
-  b.add(Order{OrderId{3}, Side::Buy, Price{100}, Quantity{5}, Sequence{3}});
+  mustAdd(b, Order{OrderId{1}, Side::Buy, Price{100}, Quantity{5}, Sequence{1}});
+  mustAdd(b, Order{OrderId{2}, Side::Buy, Price{100}, Quantity{5}, Sequence{2}});
+  mustAdd(b, Order{OrderId{3}, Side::Buy, Price{100}, Quantity{5}, Sequence{3}});
 
   ASSERT_EQ(b.front_at(Side::Buy, Price{100})->id.v, 1u);
 
@@ -121,8 +127,8 @@ TEST(OrderBook, ModifyIncreaseRestampsSequence) {
 
 TEST(OrderBook, ModifyDecreaseKeepsSequenceAndPosition) {
   OrderBook b;
-  b.add(Order{OrderId{1}, Side::Buy, Price{100}, Quantity{5}, Sequence{1}});
-  b.add(Order{OrderId{2}, Side::Buy, Price{100}, Quantity{5}, Sequence{2}});
+  mustAdd(b, Order{OrderId{1}, Side::Buy, Price{100}, Quantity{5}, Sequence{1}});
+  mustAdd(b, Order{OrderId{2}, Side::Buy, Price{100}, Quantity{5}, Sequence{2}});
 
   ASSERT_TRUE(b.modify(OrderId{1}, Quantity{2}, Sequence{99}).has_value());
 
@@ -135,11 +141,39 @@ TEST(OrderBook, ModifyDecreaseKeepsSequenceAndPosition) {
 
 TEST(OrderBook, CancelMiddleThenNeighboursStaysValid) {
   OrderBook b;
-  b.add(Order{OrderId{1}, Side::Buy, Price{100}, Quantity{5}, Sequence{1}});
-  b.add(Order{OrderId{2}, Side::Buy, Price{100}, Quantity{3}, Sequence{2}});
-  b.add(Order{OrderId{3}, Side::Buy, Price{100}, Quantity{2}, Sequence{3}});
+  mustAdd(b, Order{OrderId{1}, Side::Buy, Price{100}, Quantity{5}, Sequence{1}});
+  mustAdd(b, Order{OrderId{2}, Side::Buy, Price{100}, Quantity{3}, Sequence{2}});
+  mustAdd(b, Order{OrderId{3}, Side::Buy, Price{100}, Quantity{2}, Sequence{3}});
   ASSERT_TRUE(b.cancel(OrderId{2}).has_value());
   ASSERT_TRUE(b.cancel(OrderId{1}).has_value());
   ASSERT_TRUE(b.cancel(OrderId{3}).has_value());
   EXPECT_FALSE(b.best_bid());
+}
+
+TEST(OrderBook, AddRejectsDuplicateId) {
+  OrderBook b;
+  mustAdd(b, Order{OrderId{1}, Side::Buy, Price{100}, Quantity{5}, Sequence{1}});
+  auto r = b.add(Order{OrderId{1}, Side::Sell, Price{200}, Quantity{9}, Sequence{2}});
+  ASSERT_FALSE(r.has_value());
+  EXPECT_EQ(r.error(), RejectReason::DuplicateOrderId);
+  EXPECT_TRUE(b.validate().has_value());
+  EXPECT_FALSE(b.best_ask());
+}
+
+TEST(OrderBook, AddRejectsNonPositiveQuantity) {
+  OrderBook b;
+  EXPECT_EQ(b.add(Order{OrderId{1}, Side::Buy, Price{100}, Quantity{0}, Sequence{1}}).error(),
+            RejectReason::BadQuantity);
+  EXPECT_EQ(b.add(Order{OrderId{2}, Side::Buy, Price{100}, Quantity{-3}, Sequence{2}}).error(),
+            RejectReason::BadQuantity);
+  EXPECT_TRUE(b.validate().has_value());
+}
+
+TEST(OrderBook, ContainsTracksLiveOrders) {
+  OrderBook b;
+  EXPECT_FALSE(b.contains(OrderId{1}));
+  mustAdd(b, Order{OrderId{1}, Side::Buy, Price{100}, Quantity{5}, Sequence{1}});
+  EXPECT_TRUE(b.contains(OrderId{1}));
+  ASSERT_TRUE(b.cancel(OrderId{1}).has_value());
+  EXPECT_FALSE(b.contains(OrderId{1}));
 }

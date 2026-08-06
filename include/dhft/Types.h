@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <numeric>
 
 
 namespace dhft {
@@ -18,8 +19,8 @@ namespace dhft {
     struct Quantity {
         std::int64_t v{};
         [[nodiscard]] constexpr auto operator<=>(const Quantity&) const = default;
-        [[nodiscard]] constexpr Quantity operator+(Quantity o) const noexcept { return Quantity{v + o.v}; }
-        [[nodiscard]] constexpr Quantity operator-(Quantity o) const noexcept { return Quantity{v - o.v}; }
+        [[nodiscard]] constexpr Quantity operator+(Quantity o) const noexcept { return Quantity{std::add_sat(v, o.v)}; }
+        [[nodiscard]] constexpr Quantity operator-(Quantity o) const noexcept { return Quantity{std::sub_sat(v, o.v)}; }
         [[nodiscard]] constexpr bool positive() const noexcept { return v > 0; }
     };
 

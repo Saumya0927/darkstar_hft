@@ -132,3 +132,55 @@ TEST(Matching, BookNeverCrosses) {
   }
   SUCCEED();
 }
+
+TEST(Matching, DuplicateOrderIdIsRejected) {
+  CollectingSink s;
+  MatchingEngine e{s};
+  e.process(newOrder(1, Side::Buy, 100, 5));
+  e.process(newOrder(1, Side::Buy, 101, 7));
+  ASSERT_EQ(s.all().size(), 2u);
+  EXPECT_EQ(s.all()[1].kind, OutKind::Reject);
+  EXPECT_EQ(s.all()[1].reason, RejectReason::DuplicateOrderId);
+  EXPECT_TRUE(e.book().validate().has_value());
+  EXPECT_EQ(e.book().depth(Side::Buy, 5).size(), 1u);
+}
+
+TEST(Matching, DuplicateIdRejectedBeforeAnyMatching) {
+  CollectingSink s;
+  MatchingEngine e{s};
+  e.process(newOrder(1, Side::Sell, 100, 5));
+  e.process(newOrder(1, Side::Buy, 100, 5));
+  EXPECT_TRUE(s.trades().empty());
+  EXPECT_EQ(s.all()[1].reason, RejectReason::DuplicateOrderId);
+}
+
+TEST(Matching, ZeroQuantityIsRejected) {
+  CollectingSink s;
+  MatchingEngine e{s};
+  e.process(newOrder(1, Side::Buy, 100, 0));
+  ASSERT_EQ(s.all().size(), 1u);
+  EXPECT_EQ(s.all()[0].kind, OutKind::Reject);
+  EXPECT_EQ(s.all()[0].reason, RejectReason::BadQuantity);
+  EXPECT_FALSE(e.book().best_bid());
+}
+
+TEST(Matching, NegativeQuantityIsRejected) {
+  CollectingSink s;
+  MatchingEngine e{s};
+  e.process(newOrder(1, Side::Buy, 100, -5));
+  ASSERT_EQ(s.all().size(), 1u);
+  EXPECT_EQ(s.all()[0].kind, OutKind::Reject);
+  EXPECT_EQ(s.all()[0].reason, RejectReason::BadQuantity);
+  EXPECT_FALSE(e.book().best_bid());
+}
+
+TEST(Matching, IdIsReusableAfterCancel) {
+  CollectingSink s;
+  MatchingEngine e{s};
+  e.process(newOrder(1, Side::Buy, 100, 5));
+  e.process(InEvent{EventType::Cancel, OrderId{1}, Side::Buy, Price{0}, Quantity{0}});
+  e.process(newOrder(1, Side::Buy, 101, 3));
+  EXPECT_EQ(s.all().back().kind, OutKind::Ack);
+  ASSERT_TRUE(e.book().best_bid());
+  EXPECT_EQ(e.book().best_bid()->ticks, 101);
+}

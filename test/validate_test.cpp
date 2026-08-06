@@ -21,6 +21,8 @@ InEvent modifyOrder(std::uint64_t id, std::int64_t qty) {
   return InEvent{EventType::Modify, OrderId{id}, Side::Buy, Price{0}, Quantity{qty}};
 }
 
+void mustAdd(OrderBook& b, const Order& o) { ASSERT_TRUE(b.add(o).has_value()); }
+
 } // namespace
 
 TEST(Validate, EmptyBookIsValid) {
@@ -30,18 +32,18 @@ TEST(Validate, EmptyBookIsValid) {
 
 TEST(Validate, PopulatedBookIsValid) {
   OrderBook b;
-  b.add(Order{OrderId{1}, Side::Buy, Price{100}, Quantity{5}, Sequence{1}});
-  b.add(Order{OrderId{2}, Side::Buy, Price{100}, Quantity{3}, Sequence{2}});
-  b.add(Order{OrderId{3}, Side::Buy, Price{99}, Quantity{4}, Sequence{3}});
-  b.add(Order{OrderId{4}, Side::Sell, Price{101}, Quantity{7}, Sequence{4}});
+  mustAdd(b, Order{OrderId{1}, Side::Buy, Price{100}, Quantity{5}, Sequence{1}});
+  mustAdd(b, Order{OrderId{2}, Side::Buy, Price{100}, Quantity{3}, Sequence{2}});
+  mustAdd(b, Order{OrderId{3}, Side::Buy, Price{99}, Quantity{4}, Sequence{3}});
+  mustAdd(b, Order{OrderId{4}, Side::Sell, Price{101}, Quantity{7}, Sequence{4}});
   EXPECT_TRUE(b.validate().has_value());
 }
 
 TEST(Validate, StaysValidAfterCancels) {
   OrderBook b;
-  b.add(Order{OrderId{1}, Side::Buy, Price{100}, Quantity{5}, Sequence{1}});
-  b.add(Order{OrderId{2}, Side::Buy, Price{100}, Quantity{3}, Sequence{2}});
-  b.add(Order{OrderId{3}, Side::Buy, Price{100}, Quantity{2}, Sequence{3}});
+  mustAdd(b, Order{OrderId{1}, Side::Buy, Price{100}, Quantity{5}, Sequence{1}});
+  mustAdd(b, Order{OrderId{2}, Side::Buy, Price{100}, Quantity{3}, Sequence{2}});
+  mustAdd(b, Order{OrderId{3}, Side::Buy, Price{100}, Quantity{2}, Sequence{3}});
 
   ASSERT_TRUE(b.cancel(OrderId{2}).has_value());
   EXPECT_TRUE(b.validate().has_value());
@@ -53,24 +55,24 @@ TEST(Validate, StaysValidAfterCancels) {
 
 TEST(Validate, StaysValidAfterModifyDecrease) {
   OrderBook b;
-  b.add(Order{OrderId{1}, Side::Buy, Price{100}, Quantity{5}, Sequence{1}});
-  b.add(Order{OrderId{2}, Side::Buy, Price{100}, Quantity{5}, Sequence{2}});
+  mustAdd(b, Order{OrderId{1}, Side::Buy, Price{100}, Quantity{5}, Sequence{1}});
+  mustAdd(b, Order{OrderId{2}, Side::Buy, Price{100}, Quantity{5}, Sequence{2}});
   ASSERT_TRUE(b.modify(OrderId{1}, Quantity{2}, Sequence{9}).has_value());
   EXPECT_TRUE(b.validate().has_value());
 }
 
 TEST(Validate, StaysValidAfterModifyIncrease) {
   OrderBook b;
-  b.add(Order{OrderId{1}, Side::Buy, Price{100}, Quantity{5}, Sequence{1}});
-  b.add(Order{OrderId{2}, Side::Buy, Price{100}, Quantity{5}, Sequence{2}});
-  b.add(Order{OrderId{3}, Side::Buy, Price{100}, Quantity{5}, Sequence{3}});
+  mustAdd(b, Order{OrderId{1}, Side::Buy, Price{100}, Quantity{5}, Sequence{1}});
+  mustAdd(b, Order{OrderId{2}, Side::Buy, Price{100}, Quantity{5}, Sequence{2}});
+  mustAdd(b, Order{OrderId{3}, Side::Buy, Price{100}, Quantity{5}, Sequence{3}});
   ASSERT_TRUE(b.modify(OrderId{1}, Quantity{9}, Sequence{10}).has_value());
   EXPECT_TRUE(b.validate().has_value());
 }
 
 TEST(Validate, RejectedOperationsLeaveBookValid) {
   OrderBook b;
-  b.add(Order{OrderId{1}, Side::Buy, Price{100}, Quantity{5}, Sequence{1}});
+  mustAdd(b, Order{OrderId{1}, Side::Buy, Price{100}, Quantity{5}, Sequence{1}});
   EXPECT_FALSE(b.cancel(OrderId{99}).has_value());
   EXPECT_FALSE(b.modify(OrderId{99}, Quantity{5}, Sequence{9}).has_value());
   EXPECT_FALSE(b.modify(OrderId{1}, Quantity{0}, Sequence{9}).has_value());
@@ -105,10 +107,10 @@ TEST(TotalQuantity, EmptyBookIsZero) {
 
 TEST(TotalQuantity, SumsAcrossAllLevels) {
   OrderBook b;
-  b.add(Order{OrderId{1}, Side::Buy, Price{100}, Quantity{5}, Sequence{1}});
-  b.add(Order{OrderId{2}, Side::Buy, Price{100}, Quantity{3}, Sequence{2}});
-  b.add(Order{OrderId{3}, Side::Buy, Price{99}, Quantity{4}, Sequence{3}});
-  b.add(Order{OrderId{4}, Side::Sell, Price{101}, Quantity{7}, Sequence{4}});
+  mustAdd(b, Order{OrderId{1}, Side::Buy, Price{100}, Quantity{5}, Sequence{1}});
+  mustAdd(b, Order{OrderId{2}, Side::Buy, Price{100}, Quantity{3}, Sequence{2}});
+  mustAdd(b, Order{OrderId{3}, Side::Buy, Price{99}, Quantity{4}, Sequence{3}});
+  mustAdd(b, Order{OrderId{4}, Side::Sell, Price{101}, Quantity{7}, Sequence{4}});
 
   EXPECT_EQ(b.total_quantity(Side::Buy).v, 12);
   EXPECT_EQ(b.total_quantity(Side::Sell).v, 7);
@@ -116,8 +118,8 @@ TEST(TotalQuantity, SumsAcrossAllLevels) {
 
 TEST(TotalQuantity, ReflectsCancelAndModify) {
   OrderBook b;
-  b.add(Order{OrderId{1}, Side::Buy, Price{100}, Quantity{5}, Sequence{1}});
-  b.add(Order{OrderId{2}, Side::Buy, Price{99}, Quantity{5}, Sequence{2}});
+  mustAdd(b, Order{OrderId{1}, Side::Buy, Price{100}, Quantity{5}, Sequence{1}});
+  mustAdd(b, Order{OrderId{2}, Side::Buy, Price{99}, Quantity{5}, Sequence{2}});
   ASSERT_TRUE(b.modify(OrderId{1}, Quantity{2}, Sequence{9}).has_value());
   EXPECT_EQ(b.total_quantity(Side::Buy).v, 7);
   ASSERT_TRUE(b.cancel(OrderId{2}).has_value());
@@ -126,7 +128,7 @@ TEST(TotalQuantity, ReflectsCancelAndModify) {
 
 TEST(TotalQuantity, GoesToZeroWhenBookEmpties) {
   OrderBook b;
-  b.add(Order{OrderId{1}, Side::Sell, Price{101}, Quantity{5}, Sequence{1}});
+  mustAdd(b, Order{OrderId{1}, Side::Sell, Price{101}, Quantity{5}, Sequence{1}});
   ASSERT_TRUE(b.cancel(OrderId{1}).has_value());
   EXPECT_EQ(b.total_quantity(Side::Sell).v, 0);
 }

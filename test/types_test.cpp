@@ -1,6 +1,7 @@
 #include <dhft/Types.h>
 #include <gtest/gtest.h>
 
+#include <limits>
 #include <unordered_map>
 
 using namespace dhft;
@@ -54,4 +55,13 @@ TEST(Types, OrderAndTradeConstruct) {
   EXPECT_EQ(t.aggressor.v, 1u);
   EXPECT_EQ(t.resting.v, 2u);
   EXPECT_EQ(t.qty.v, 3);
+}
+
+TEST(Types, QuantityArithmeticSaturates) {
+  constexpr std::int64_t hi = std::numeric_limits<std::int64_t>::max();
+  constexpr std::int64_t lo = std::numeric_limits<std::int64_t>::min();
+  EXPECT_EQ((Quantity{hi} + Quantity{1}).v, hi);
+  EXPECT_EQ((Quantity{lo} - Quantity{1}).v, lo);
+  EXPECT_EQ((Quantity{5} + Quantity{2}).v, 7);
+  EXPECT_EQ((Quantity{5} - Quantity{2}).v, 3);
 }

@@ -1,3 +1,4 @@
+#include <dhft/Check.h>
 #include <dhft/MatchingEngine.h>
 
 
@@ -10,6 +11,16 @@ namespace dhft {
     void MatchingEngine::process(const InEvent& e) noexcept {
         switch (e.type) {
             case EventType::NewOrder: {
+                if (!e.qty.positive()) {
+                    sink_.on_event(OutEvent{OutKind::Reject, e.id, OrderId{0}, Price{0}, Quantity{0},
+                                            RejectReason::BadQuantity});
+                    break;
+                }
+                if (book_.contains(e.id)) {
+                    sink_.on_event(OutEvent{OutKind::Reject, e.id, OrderId{0}, Price{0}, Quantity{0},
+                                            RejectReason::DuplicateOrderId});
+                    break;
+                }
                 Order o{e.id, e.side, e.price, e.qty, next_};
                 next_ = next_.next();
                 match_and_rest(o);
@@ -68,8 +79,10 @@ namespace dhft {
             }
         }
 
-        if (o.qty.positive())
-            book_.add(o);
+        if (o.qty.positive()) {
+            const auto rested = book_.add(o);
+            DHFT_CHECK_MSG(rested.has_value(), "residual of a validated order must rest");
+        }
         sink_.on_event(OutEvent{OutKind::Ack, o.id});
     }
 }
