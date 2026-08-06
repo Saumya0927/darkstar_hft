@@ -6,6 +6,7 @@
 
 #include <cstddef>
 #include <optional>
+#include <utility>
 #include <vector>
 
 namespace dhft::reference {
@@ -24,6 +25,8 @@ public:
     [[nodiscard]] std::optional<Price> best_bid() const noexcept;
     [[nodiscard]] std::optional<Price> best_ask() const noexcept;
     [[nodiscard]] Quantity total_quantity(Side side) const noexcept;
+    [[nodiscard]] std::vector<std::pair<Price, Quantity>> depth(Side side,
+                                                                std::size_t levels) const;
 
 private:
     std::vector<Order> resting_;

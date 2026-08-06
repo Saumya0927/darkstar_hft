@@ -65,8 +65,11 @@ std::string run_to_text(const std::vector<InEvent>& events) {
     MatchingEngine engine{sink};
 
     out << "--- events ---\n";
-    for (const auto& e : events) {
-        engine.process(e);
+    for (std::size_t i = 0; i < events.size(); ++i) {
+        engine.process(events[i]);
+        if (const auto v = engine.book().validate(); !v.has_value()) {
+            out << "INVARIANT VIOLATION after event " << i << ": " << v.error() << '\n';
+        }
     }
 
     out << "--- book ---\n";

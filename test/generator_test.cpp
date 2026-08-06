@@ -56,8 +56,12 @@ TEST(Generator, RespectsPriceAndQuantityBounds) {
     if (e.type == EventType::NewOrder) {
       EXPECT_GE(e.price.ticks, 50);
       EXPECT_LE(e.price.ticks, 60);
-      EXPECT_GE(e.qty.v, 1);
       EXPECT_LE(e.qty.v, 4);
+      if (e.qty.v > 0) {
+        EXPECT_GE(e.qty.v, 1);
+      } else {
+        EXPECT_GE(e.qty.v, -4);
+      }
     }
     if (e.type == EventType::Modify) {
       EXPECT_GE(e.qty.v, 1);
@@ -66,16 +70,83 @@ TEST(Generator, RespectsPriceAndQuantityBounds) {
   }
 }
 
-TEST(Generator, NewOrderIdsAreUnique) {
+TEST(Generator, NewOrderIdsAreUniqueWhenDuplicatesDisabled) {
   GenConfig cfg;
   cfg.seed = 99;
   cfg.events = 500;
+  cfg.pctDuplicateId = 0;
   std::set<std::uint64_t> seen;
   for (const auto& e : generate(cfg)) {
     if (e.type == EventType::NewOrder) {
       EXPECT_TRUE(seen.insert(e.id.v).second) << "duplicate new-order id " << e.id.v;
     }
   }
+}
+
+TEST(Generator, InjectsInvalidQuantitiesAndDuplicateIds) {
+  GenConfig cfg;
+  cfg.seed = 5;
+  cfg.events = 2000;
+
+  std::set<std::uint64_t> seenIds;
+  std::size_t invalid = 0;
+  std::size_t duplicates = 0;
+  for (const auto& e : generate(cfg)) {
+    if (e.type != EventType::NewOrder) {
+      continue;
+    }
+    if (e.qty.v <= 0) {
+      ++invalid;
+    }
+    if (!seenIds.insert(e.id.v).second) {
+      ++duplicates;
+    }
+  }
+  EXPECT_GT(invalid, 0u) << "generator must exercise the BadQuantity path";
+  EXPECT_GT(duplicates, 0u) << "generator must exercise the DuplicateOrderId path";
+}
+
+TEST(Generator, EdgeCasesCanBeDisabled) {
+  GenConfig cfg;
+  cfg.seed = 5;
+  cfg.events = 2000;
+  cfg.pctInvalidQty = 0;
+  cfg.pctDuplicateId = 0;
+  for (const auto& e : generate(cfg)) {
+    if (e.type == EventType::NewOrder) {
+      EXPECT_GT(e.qty.v, 0);
+    }
+  }
+}
+
+TEST(Generator, ReachesEveryRejectReason) {
+  GenConfig cfg;
+  cfg.seed = 11;
+  cfg.events = 3000;
+
+  CollectingSink sink;
+  MatchingEngine engine{sink};
+  for (const auto& e : generate(cfg)) {
+    engine.process(e);
+  }
+
+  std::size_t unknown = 0;
+  std::size_t badQty = 0;
+  std::size_t duplicate = 0;
+  for (const auto& o : sink.all()) {
+    if (o.kind != OutKind::Reject) {
+      continue;
+    }
+    switch (o.reason) {
+    case RejectReason::UnknownOrder: ++unknown; break;
+    case RejectReason::BadQuantity: ++badQty; break;
+    case RejectReason::DuplicateOrderId: ++duplicate; break;
+    case RejectReason::None: break;
+    }
+  }
+  EXPECT_GT(unknown, 0u);
+  EXPECT_GT(badQty, 0u);
+  EXPECT_GT(duplicate, 0u);
 }
 
 TEST(Generator, MixHonoursWeights) {

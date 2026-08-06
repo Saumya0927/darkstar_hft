@@ -6,6 +6,7 @@
 #include <dhft/testkit/Golden.h>
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <sstream>
 #include <string>
@@ -55,6 +56,17 @@ void expectSameStream(const std::vector<InEvent>& script, const std::string& lab
   ASSERT_EQ(fast.size(), slow.size()) << label << ": output stream lengths differ";
 }
 
+void expectSameLadder(const OrderBook& fast, const reference::NaiveEngine& slow, Side side,
+                      const std::string& label) {
+  const auto a = fast.depth(side, 100);
+  const auto b = slow.depth(side, 100);
+  ASSERT_EQ(a.size(), b.size()) << label << ": level count differs";
+  for (std::size_t i = 0; i < a.size(); ++i) {
+    ASSERT_EQ(a[i].first.ticks, b[i].first.ticks) << label << ": price differs at level " << i;
+    ASSERT_EQ(a[i].second.v, b[i].second.v) << label << ": quantity differs at level " << i;
+  }
+}
+
 } // namespace
 
 TEST(Equivalence, AgreesOnGoldenScripts) {
@@ -63,6 +75,9 @@ TEST(Equivalence, AgreesOnGoldenScripts) {
   for (const auto& name : names) {
     const auto script = io::parse_script_file(std::string{DHFT_GOLDEN_DIR} + "/" + name + ".script");
     expectSameStream(script, "golden " + name);
+    if (HasFatalFailure()) {
+      return;
+    }
   }
 }
 
@@ -72,6 +87,9 @@ TEST(Equivalence, AgreesOnRandomScripts) {
     cfg.seed = seed;
     cfg.events = 200;
     expectSameStream(generate(cfg), "seed=" + std::to_string(seed));
+    if (HasFatalFailure()) {
+      return;
+    }
   }
 }
 
@@ -84,6 +102,9 @@ TEST(Equivalence, AgreesOnNarrowPriceBandWithHeavyCrossing) {
     cfg.maxPrice = 101;
     cfg.maxQty = 3;
     expectSameStream(generate(cfg), "narrow seed=" + std::to_string(seed));
+    if (HasFatalFailure()) {
+      return;
+    }
   }
 }
 
@@ -96,10 +117,13 @@ TEST(Equivalence, AgreesOnModifyHeavyScripts) {
     cfg.weightCancel = 10;
     cfg.weightModify = 50;
     expectSameStream(generate(cfg), "modify-heavy seed=" + std::to_string(seed));
+    if (HasFatalFailure()) {
+      return;
+    }
   }
 }
 
-TEST(Equivalence, BooksAgreeOnRestingQuantity) {
+TEST(Equivalence, BooksAgreeOnFullLadder) {
   for (std::uint64_t seed = 1; seed <= 100; ++seed) {
     GenConfig cfg;
     cfg.seed = seed;
@@ -116,16 +140,16 @@ TEST(Equivalence, BooksAgreeOnRestingQuantity) {
       slow.process(e);
     }
 
-    EXPECT_EQ(fast.book().total_quantity(Side::Buy).v, slow.total_quantity(Side::Buy).v)
-        << "seed=" << seed;
-    EXPECT_EQ(fast.book().total_quantity(Side::Sell).v, slow.total_quantity(Side::Sell).v)
-        << "seed=" << seed;
-    EXPECT_EQ(fast.book().best_bid().has_value(), slow.best_bid().has_value()) << "seed=" << seed;
-    if (fast.book().best_bid() && slow.best_bid()) {
-      EXPECT_EQ(fast.book().best_bid()->ticks, slow.best_bid()->ticks) << "seed=" << seed;
-    }
-    if (fast.book().best_ask() && slow.best_ask()) {
-      EXPECT_EQ(fast.book().best_ask()->ticks, slow.best_ask()->ticks) << "seed=" << seed;
+    const std::string label = "seed=" + std::to_string(seed);
+    EXPECT_EQ(fast.book().total_quantity(Side::Buy).v, slow.total_quantity(Side::Buy).v) << label;
+    EXPECT_EQ(fast.book().total_quantity(Side::Sell).v, slow.total_quantity(Side::Sell).v) << label;
+    EXPECT_EQ(fast.book().best_bid().has_value(), slow.best_bid().has_value()) << label;
+    EXPECT_EQ(fast.book().best_ask().has_value(), slow.best_ask().has_value()) << label;
+
+    expectSameLadder(fast.book(), slow, Side::Buy, label + " bids");
+    expectSameLadder(fast.book(), slow, Side::Sell, label + " asks");
+    if (HasFatalFailure()) {
+      return;
     }
   }
 }

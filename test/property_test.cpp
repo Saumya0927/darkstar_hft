@@ -23,6 +23,15 @@ GenConfig configFor(std::uint64_t seed) {
   return cfg;
 }
 
+const std::vector<InEvent>& scriptFor(std::uint64_t seed) {
+  static std::unordered_map<std::uint64_t, std::vector<InEvent>> cache;
+  const auto at = cache.find(seed);
+  if (at != cache.end()) {
+    return at->second;
+  }
+  return cache.emplace(seed, generate(configFor(seed))).first->second;
+}
+
 std::string context(std::uint64_t seed, std::size_t event) {
   return "seed=" + std::to_string(seed) + " event=" + std::to_string(event);
 }
@@ -42,7 +51,7 @@ TEST(Property, InvariantsHoldAfterEveryEvent) {
   for (std::uint64_t seed = 1; seed <= kSeeds; ++seed) {
     CollectingSink sink;
     MatchingEngine engine{sink};
-    const auto script = generate(configFor(seed));
+    const auto& script = scriptFor(seed);
 
     for (std::size_t i = 0; i < script.size(); ++i) {
       engine.process(script[i]);
@@ -56,7 +65,7 @@ TEST(Property, BookNeverCrosses) {
   for (std::uint64_t seed = 1; seed <= kSeeds; ++seed) {
     CollectingSink sink;
     MatchingEngine engine{sink};
-    const auto script = generate(configFor(seed));
+    const auto& script = scriptFor(seed);
 
     for (std::size_t i = 0; i < script.size(); ++i) {
       engine.process(script[i]);
@@ -73,7 +82,7 @@ TEST(Property, NoOrderOverFills) {
   for (std::uint64_t seed = 1; seed <= kSeeds; ++seed) {
     CollectingSink sink;
     MatchingEngine engine{sink};
-    const auto script = generate(configFor(seed));
+    const auto& script = scriptFor(seed);
 
     std::unordered_map<std::uint64_t, std::int64_t> outstanding;
     std::size_t seen = 0;
@@ -116,7 +125,7 @@ TEST(Property, TradesRespectTheAggressorLimit) {
   for (std::uint64_t seed = 1; seed <= kSeeds; ++seed) {
     CollectingSink sink;
     MatchingEngine engine{sink};
-    const auto script = generate(configFor(seed));
+    const auto& script = scriptFor(seed);
     std::size_t seen = 0;
 
     for (std::size_t i = 0; i < script.size(); ++i) {
@@ -144,7 +153,7 @@ TEST(Property, QuantityIsConserved) {
   for (std::uint64_t seed = 1; seed <= kSeeds; ++seed) {
     CollectingSink sink;
     MatchingEngine engine{sink};
-    const auto script = generate(configFor(seed));
+    const auto& script = scriptFor(seed);
 
     std::unordered_map<std::uint64_t, std::int64_t> outstanding;
     std::int64_t expected = 0;
@@ -192,7 +201,7 @@ TEST(Property, QuantityIsConserved) {
 
 TEST(Property, ReplayIsDeterministic) {
   for (std::uint64_t seed = 1; seed <= kSeeds; ++seed) {
-    const auto script = generate(configFor(seed));
+    const auto& script = scriptFor(seed);
     ASSERT_EQ(replay(script), replay(script)) << "seed=" << seed;
   }
 }

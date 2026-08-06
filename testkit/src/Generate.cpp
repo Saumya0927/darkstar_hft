@@ -1,5 +1,7 @@
 #include <dhft/testkit/Generate.h>
 
+#include <dhft/Check.h>
+
 #include <random>
 
 namespace dhft::testkit {
@@ -7,6 +9,9 @@ namespace dhft::testkit {
 std::vector<InEvent> generate(const GenConfig& cfg) {
     std::vector<InEvent> events;
     events.reserve(cfg.events);
+
+    DHFT_CHECK_MSG(cfg.weightNew + cfg.weightCancel + cfg.weightModify > 0,
+                   "generator weights must not all be zero");
 
     std::mt19937_64 rng{cfg.seed};
     std::discrete_distribution<int> kind{
@@ -16,6 +21,8 @@ std::vector<InEvent> generate(const GenConfig& cfg) {
     };
     std::uniform_int_distribution<std::int64_t> priceDist{cfg.minPrice, cfg.maxPrice};
     std::uniform_int_distribution<std::int64_t> qtyDist{1, cfg.maxQty};
+    std::uniform_int_distribution<std::int64_t> invalidQtyDist{-cfg.maxQty, 0};
+    std::uniform_int_distribution<int> pctDist{0, 99};
     std::bernoulli_distribution buyDist{0.5};
 
     // Ids we have issued and not yet cancelled. Some of these will already have been
@@ -24,11 +31,27 @@ std::vector<InEvent> generate(const GenConfig& cfg) {
     std::vector<OrderId> live;
     std::uint64_t nextId = 1;
 
+    // A small fraction of new orders deliberately carry a non-positive quantity or reuse a
+    // live id, so the BadQuantity and DuplicateOrderId reject paths are actually exercised.
     const auto emitNew = [&] {
-        const OrderId id{nextId++};
-        live.push_back(id);
-        events.push_back(InEvent::new_order(id, buyDist(rng) ? Side::Buy : Side::Sell,
-                                            Price{priceDist(rng)}, Quantity{qtyDist(rng)}));
+        const bool duplicate = !live.empty() && pctDist(rng) < cfg.pctDuplicateId;
+        const bool invalid = pctDist(rng) < cfg.pctInvalidQty;
+
+        OrderId id{};
+        if (duplicate) {
+            std::uniform_int_distribution<std::size_t> pick{0, live.size() - 1};
+            id = live[pick(rng)];
+        } else {
+            id = OrderId{nextId++};
+        }
+
+        const Quantity qty{invalid ? invalidQtyDist(rng) : qtyDist(rng)};
+        const Side side = buyDist(rng) ? Side::Buy : Side::Sell;
+
+        if (!duplicate && !invalid) {
+            live.push_back(id);
+        }
+        events.push_back(InEvent::new_order(id, side, Price{priceDist(rng)}, qty));
     };
 
     while (events.size() < cfg.events) {

@@ -1,5 +1,7 @@
 #include <dhft/reference/NaiveEngine.h>
 
+#include <algorithm>
+
 namespace dhft::reference {
 
 NaiveEngine::NaiveEngine(Sink& sink) noexcept : sink_{sink} {}
@@ -32,6 +34,32 @@ Quantity NaiveEngine::total_quantity(Side side) const noexcept {
         }
     }
     return total;
+}
+
+std::vector<std::pair<Price, Quantity>> NaiveEngine::depth(Side side,
+                                                           std::size_t levels) const {
+    std::vector<std::pair<Price, Quantity>> rows;
+
+    for (const auto& o : resting_) {
+        if (o.side != side) {
+            continue;
+        }
+        const auto at = std::find_if(rows.begin(), rows.end(),
+                                     [&o](const auto& row) { return row.first == o.price; });
+        if (at == rows.end()) {
+            rows.emplace_back(o.price, o.qty);
+        } else {
+            at->second = at->second + o.qty;
+        }
+    }
+
+    std::sort(rows.begin(), rows.end(), [side](const auto& a, const auto& b) {
+        return side == Side::Buy ? (a.first > b.first) : (a.first < b.first);
+    });
+    if (rows.size() > levels) {
+        rows.resize(levels);
+    }
+    return rows;
 }
 
 std::size_t NaiveEngine::index_of(OrderId id) const noexcept {

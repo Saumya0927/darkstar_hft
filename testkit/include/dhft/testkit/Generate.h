@@ -17,6 +17,8 @@ struct GenConfig {
     int weightNew{60};
     int weightCancel{25};
     int weightModify{15};
+    int pctInvalidQty{3};
+    int pctDuplicateId{3};
 };
 
 // Deterministic: the same config always yields the same script.
