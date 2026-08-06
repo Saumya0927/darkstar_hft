@@ -18,5 +18,10 @@ dhft_add_test(matching_test    dhft)       # Task 6
 dhft_add_test(integration_test dhft_io)    # Task 8
 dhft_add_test(golden_test      dhft_testkit)  # Task 3
 dhft_add_test(generator_test   dhft_testkit)  # Task 4
+dhft_add_test(property_test    dhft_testkit)  # Task 5
+dhft_add_test(reference_test   dhft_reference)  # Task 6
+dhft_add_test(equivalence_test dhft_testkit)  # Task 7
+target_compile_definitions(equivalence_test PRIVATE
+  DHFT_GOLDEN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/golden")
 target_compile_definitions(golden_test PRIVATE
   DHFT_GOLDEN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/golden")

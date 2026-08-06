@@ -54,7 +54,8 @@ target_link_libraries(dhft PUBLIC dhft_options)
 # Text I/O module (script parsing, human-readable output), built on the core engine.
 add_subdirectory(io)
 
-# Test-only support library (golden harness, generators).
+# Test-only: brute-force oracle and the harness/generator support library.
+add_subdirectory(reference)
 add_subdirectory(testkit)
 
 # GoogleTest, fetched at configure time (no manual checkout).
