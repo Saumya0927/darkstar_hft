@@ -5,8 +5,8 @@
 using namespace dhft;
 
 TEST(Feed, ScriptedYieldsEventsInOrderThenStops) {
-  ScriptedFeed f{{InEvent{EventType::NewOrder, OrderId{1}, Side::Buy, Price{100}, Quantity{5}},
-                  InEvent{EventType::Cancel, OrderId{1}, Side::Buy, Price{0}, Quantity{0}}}};
+  ScriptedFeed f{{InEvent::new_order(OrderId{1}, Side::Buy, Price{100}, Quantity{5}),
+                  InEvent::cancel(OrderId{1})}};
   InEvent e{};
   ASSERT_TRUE(f.next(e));
   EXPECT_EQ(e.id.v, 1u);
@@ -24,17 +24,16 @@ TEST(Feed, EmptyScriptYieldsNothing) {
 
 TEST(Sink, CollectingRecordsEverything) {
   CollectingSink s;
-  s.on_event(OutEvent{OutKind::Ack, OrderId{1}});
-  s.on_event(OutEvent{OutKind::Trade, OrderId{2}, OrderId{1}, Price{100}, Quantity{3}});
+  s.on_event(OutEvent::ack(OrderId{1}));
+  s.on_event(OutEvent::trade(OrderId{2}, OrderId{1}, Price{100}, Quantity{3}));
   EXPECT_EQ(s.all().size(), 2u);
 }
 
 TEST(Sink, CollectingFiltersTrades) {
   CollectingSink s;
-  s.on_event(OutEvent{OutKind::Ack, OrderId{1}});
-  s.on_event(OutEvent{OutKind::Trade, OrderId{2}, OrderId{1}, Price{100}, Quantity{3}});
-  s.on_event(OutEvent{OutKind::Reject, OrderId{9}, OrderId{0}, Price{0}, Quantity{0},
-                      RejectReason::UnknownOrder});
+  s.on_event(OutEvent::ack(OrderId{1}));
+  s.on_event(OutEvent::trade(OrderId{2}, OrderId{1}, Price{100}, Quantity{3}));
+  s.on_event(OutEvent::reject(OrderId{9}, RejectReason::UnknownOrder));
   auto t = s.trades();
   ASSERT_EQ(t.size(), 1u);
   EXPECT_EQ(t[0].aggressor.v, 2u);
@@ -46,6 +45,6 @@ TEST(Sink, CollectingFiltersTrades) {
 TEST(Sink, PolymorphicThroughBaseReference) {
   CollectingSink s;
   Sink& base = s;
-  base.on_event(OutEvent{OutKind::Ack, OrderId{7}});
+  base.on_event(OutEvent::ack(OrderId{7}));
   EXPECT_EQ(s.all().size(), 1u);
 }

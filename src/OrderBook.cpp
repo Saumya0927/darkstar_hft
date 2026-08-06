@@ -8,13 +8,31 @@ namespace dhft {
         if (!o.qty.positive()) {
             return std::unexpected(RejectReason::BadQuantity);
         }
-        if (index_.contains(o.id)) {
+
+        auto [slot, inserted] = index_.try_emplace(o.id);
+        if (!inserted) {
             return std::unexpected(RejectReason::DuplicateOrderId);
         }
 
-        auto& lvl = (o.side == Side::Buy) ? bids_[o.price] : asks_[o.price];
-        lvl.push_back(o);
-        index_[o.id] = Location{o.side, o.price, std::prev(lvl.end())};
+        auto place = [&](auto& m) {
+            auto& lvl = m[o.price];
+            try {
+                lvl.push_back(o);
+            } catch (...) {
+                if (lvl.empty()) {
+                    m.erase(o.price);
+                }
+                index_.erase(slot);
+                throw;
+            }
+            slot->second = Location{o.side, o.price, std::prev(lvl.end())};
+        };
+
+        if (o.side == Side::Buy) {
+            place(bids_);
+        } else {
+            place(asks_);
+        }
         return {};
     }
 
@@ -36,18 +54,19 @@ namespace dhft {
         return asks_.begin()->first;
     }
 
-    std::vector<std::pair<Price, Quantity>> OrderBook::depth(Side side, int levels) const {
-        std::vector<std::pair<Price, Quantity>> result;
+    void OrderBook::depth_into(Side side, std::size_t levels,
+                               std::vector<std::pair<Price, Quantity>>& out) const {
+        out.clear();
 
         auto walk = [&](const auto& m) {
-            int count = 0;
+            std::size_t count = 0;
             for (const auto& [price, level] : m) {
                 if (count == levels)
                     break;
-                std::int64_t total = 0;
+                Quantity total{};
                 for (const auto& ord : level)
-                    total += ord.qty.v;
-                result.push_back({price, Quantity{total}});
+                    total = total + ord.qty;
+                out.emplace_back(price, total);
                 ++count;
             }
         };
@@ -57,7 +76,11 @@ namespace dhft {
         } else {
             walk(asks_);
         }
+    }
 
+    std::vector<std::pair<Price, Quantity>> OrderBook::depth(Side side, std::size_t levels) const {
+        std::vector<std::pair<Price, Quantity>> result;
+        depth_into(side, levels, result);
         return result;
     }
 
@@ -127,12 +150,12 @@ namespace dhft {
     }
 
     Quantity OrderBook::total_quantity(Side side) const noexcept {
-        std::int64_t total = 0;
+        Quantity total{};
 
         auto sum = [&](const auto& m) {
             for (const auto& entry : m) {
                 for (const auto& order : entry.second) {
-                    total += order.qty.v;
+                    total = total + order.qty;
                 }
             }
         };
@@ -143,68 +166,78 @@ namespace dhft {
             sum(asks_);
         }
 
-        return Quantity{total};
+        return total;
     }
 
     std::expected<void, std::string> OrderBook::validate() const {
         std::size_t counted = 0;
 
-        auto checkSide = [&](const auto& m, Side side) -> std::expected<void, std::string> {
-            for (const auto& [price, level] : m) {
-                if (level.empty()) {
-                    return std::unexpected("empty level at price " + std::to_string(price.ticks));
+        auto check_order = [&](const Order& order, Price levelPrice,
+                               Side side) -> std::expected<void, std::string> {
+            auto who = [&order] { return "order " + std::to_string(order.id.v); };
+
+            if (!order.qty.positive()) {
+                return std::unexpected(who() + " has non-positive quantity");
+            }
+            if (order.price != levelPrice) {
+                return std::unexpected(who() + " price " + std::to_string(order.price.ticks) +
+                                       " does not match its level " +
+                                       std::to_string(levelPrice.ticks));
+            }
+            if (order.side != side) {
+                return std::unexpected(who() + " sits on the wrong side of the book");
+            }
+
+            const auto entry = index_.find(order.id);
+            if (entry == index_.end()) {
+                return std::unexpected(who() + " is missing from the index");
+            }
+
+            const Location& loc = entry->second;
+            if (loc.side != order.side || loc.price != order.price || &(*loc.node) != &order) {
+                return std::unexpected("index entry for " + who() + " is stale");
+            }
+            return {};
+        };
+
+        auto check_level = [&](Price price, const Level& level,
+                               Side side) -> std::expected<void, std::string> {
+            if (level.empty()) {
+                return std::unexpected("empty level at price " + std::to_string(price.ticks));
+            }
+
+            bool first = true;
+            Sequence prev{};
+            for (const auto& order : level) {
+                ++counted;
+                if (auto r = check_order(order, price, side); !r.has_value()) {
+                    return r;
                 }
+                if (!first && !(prev < order.seq)) {
+                    return std::unexpected("sequence is not ascending at price " +
+                                           std::to_string(price.ticks) + ", order " +
+                                           std::to_string(order.id.v) + " has sequence " +
+                                           std::to_string(order.seq.v));
+                }
+                prev = order.seq;
+                first = false;
+            }
+            return {};
+        };
 
-                bool first = true;
-                Sequence prev{};
-
-                for (const auto& order : level) {
-                    ++counted;
-                    auto who = [&order] { return "order " + std::to_string(order.id.v); };
-
-                    if (!order.qty.positive()) {
-                        return std::unexpected(who() + " has non-positive quantity");
-                    }
-
-                    if (order.price != price) {
-                        return std::unexpected(who() + " price " +
-                                               std::to_string(order.price.ticks) +
-                                               " does not match its level " +
-                                               std::to_string(price.ticks));
-                    }
-
-                    if (order.side != side) {
-                        return std::unexpected(who() + " sits on the wrong side of the book");
-                    }
-
-                    auto it = index_.find(order.id);
-                    if (it == index_.end()) {
-                        return std::unexpected(who() + " is missing from the index");
-                    }
-
-                    const Location& loc = it->second;
-                    if (loc.side != order.side || loc.price != order.price ||
-                        &(*loc.node) != &order) {
-                        return std::unexpected("index entry for " + who() + " is stale");
-                    }
-
-                    if (!first && !(prev < order.seq)) {
-                        return std::unexpected("sequence is not ascending at price " +
-                                               std::to_string(price.ticks) + ", " + who() +
-                                               " has sequence " + std::to_string(order.seq.v));
-                    }
-
-                    prev = order.seq;
-                    first = false;
+        auto check_side = [&](const auto& m, Side side) -> std::expected<void, std::string> {
+            for (const auto& [price, level] : m) {
+                if (auto r = check_level(price, level, side); !r.has_value()) {
+                    return r;
                 }
             }
             return {};
         };
 
-        if (auto r = checkSide(bids_, Side::Buy); !r.has_value()) {
+        if (auto r = check_side(bids_, Side::Buy); !r.has_value()) {
             return r;
         }
-        if (auto r = checkSide(asks_, Side::Sell); !r.has_value()) {
+        if (auto r = check_side(asks_, Side::Sell); !r.has_value()) {
             return r;
         }
 
@@ -213,7 +246,6 @@ namespace dhft {
                                    " entries but the book holds " + std::to_string(counted) +
                                    " orders");
         }
-
         return {};
     }
 }

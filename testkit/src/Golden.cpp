@@ -17,11 +17,16 @@ namespace {
 
 bool updating() { return std::getenv("DHFT_UPDATE_GOLDEN") != nullptr; }
 
+std::string normalise(std::string text) {
+    text.erase(std::remove(text.begin(), text.end(), '\r'), text.end());
+    return text;
+}
+
 std::string read_file(const std::filesystem::path& p) {
     std::ifstream in{p, std::ios::binary};
     std::ostringstream ss;
     ss << in.rdbuf();
-    return ss.str();
+    return normalise(ss.str());
 }
 
 std::vector<std::string> split_lines(const std::string& s) {
@@ -49,7 +54,7 @@ std::string first_difference(const std::string& expected, const std::string& act
         return "line count differs: expected " + std::to_string(e.size()) + ", actual " +
                std::to_string(a.size());
     }
-    return "trailing whitespace differs";
+    return "content differs but no differing line was found";
 }
 
 } // namespace
@@ -97,6 +102,7 @@ GoldenOutcome check_golden(const std::string& dir, const std::string& name) {
     }
 
     const std::string expected = read_file(expectedPath);
+    actual = normalise(std::move(actual));
     if (expected == actual) {
         return {true, {}};
     }

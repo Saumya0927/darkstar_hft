@@ -30,3 +30,9 @@ namespace dhft::detail {
             ::dhft::detail::check_failed(#cond, __FILE__, __LINE__, (msg));               \
         }                                                                                \
     } while (false)
+
+#ifdef NDEBUG
+#define DHFT_DCHECK(cond) ((void)0)
+#else
+#define DHFT_DCHECK(cond) DHFT_CHECK(cond)
+#endif

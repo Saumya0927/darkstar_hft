@@ -10,15 +10,15 @@ using namespace dhft;
 namespace {
 
 InEvent newOrder(std::uint64_t id, Side side, std::int64_t px, std::int64_t qty) {
-  return InEvent{EventType::NewOrder, OrderId{id}, side, Price{px}, Quantity{qty}};
+  return InEvent::new_order(OrderId{id}, side, Price{px}, Quantity{qty});
 }
 
 InEvent cancelOrder(std::uint64_t id) {
-  return InEvent{EventType::Cancel, OrderId{id}, Side::Buy, Price{0}, Quantity{0}};
+  return InEvent::cancel(OrderId{id});
 }
 
 InEvent modifyOrder(std::uint64_t id, std::int64_t qty) {
-  return InEvent{EventType::Modify, OrderId{id}, Side::Buy, Price{0}, Quantity{qty}};
+  return InEvent::modify(OrderId{id}, Quantity{qty});
 }
 
 void mustAdd(OrderBook& b, const Order& o) { ASSERT_TRUE(b.add(o).has_value()); }

@@ -1,0 +1,2 @@
+*.expected text eol=lf
+*.script   text eol=lf

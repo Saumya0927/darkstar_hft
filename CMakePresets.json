@@ -1,23 +1,86 @@
 {
   "version": 6,
-  "cmakeMinimumRequired": { "major": 3, "minor": 28, "patch": 0 },
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 28,
+    "patch": 0
+  },
   "configurePresets": [
     {
-      "name": "debug",
-      "displayName": "Debug (Homebrew clang, C++26, ASan+UBSan)",
+      "name": "base",
+      "hidden": true,
       "generator": "Unix Makefiles",
+      "cacheVariables": {
+        "CMAKE_CXX_COMPILER": "/opt/homebrew/opt/llvm/bin/clang++",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "CMAKE_AR": "/opt/homebrew/opt/llvm/bin/llvm-ar",
+        "CMAKE_RANLIB": "/opt/homebrew/opt/llvm/bin/llvm-ranlib"
+      }
+    },
+    {
+      "name": "debug",
+      "inherits": "base",
+      "displayName": "Debug (-O0, ASan+UBSan) \u2014 correctness",
       "binaryDir": "${sourceDir}/build",
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Debug",
-        "CMAKE_CXX_COMPILER": "/opt/homebrew/opt/llvm/bin/clang++",
-        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
+    },
+    {
+      "name": "relassert",
+      "inherits": "base",
+      "displayName": "RelAssert (-O2, checks on, no sanitizers) \u2014 property runs",
+      "binaryDir": "${sourceDir}/build-relassert",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo"
+      }
+    },
+    {
+      "name": "release",
+      "inherits": "base",
+      "displayName": "Release (-O2, ThinLTO, dead-strip)",
+      "binaryDir": "${sourceDir}/build-release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "DHFT_ENABLE_LTO": "ON"
       }
     }
   ],
   "buildPresets": [
-    { "name": "debug", "configurePreset": "debug" }
+    {
+      "name": "debug",
+      "configurePreset": "debug"
+    },
+    {
+      "name": "relassert",
+      "configurePreset": "relassert"
+    },
+    {
+      "name": "release",
+      "configurePreset": "release"
+    }
   ],
   "testPresets": [
-    { "name": "debug", "configurePreset": "debug", "output": { "outputOnFailure": true } }
+    {
+      "name": "debug",
+      "configurePreset": "debug",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "relassert",
+      "configurePreset": "relassert",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "release",
+      "configurePreset": "release",
+      "output": {
+        "outputOnFailure": true
+      }
+    }
   ]
 }

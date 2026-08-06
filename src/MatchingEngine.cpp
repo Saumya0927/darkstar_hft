@@ -12,13 +12,11 @@ namespace dhft {
         switch (e.type) {
             case EventType::NewOrder: {
                 if (!e.qty.positive()) {
-                    sink_.on_event(OutEvent{OutKind::Reject, e.id, OrderId{0}, Price{0}, Quantity{0},
-                                            RejectReason::BadQuantity});
+                    sink_.on_event(OutEvent::reject(e.id, RejectReason::BadQuantity));
                     break;
                 }
                 if (book_.contains(e.id)) {
-                    sink_.on_event(OutEvent{OutKind::Reject, e.id, OrderId{0}, Price{0}, Quantity{0},
-                                            RejectReason::DuplicateOrderId});
+                    sink_.on_event(OutEvent::reject(e.id, RejectReason::DuplicateOrderId));
                     break;
                 }
                 Order o{e.id, e.side, e.price, e.qty, next_};
@@ -27,22 +25,21 @@ namespace dhft {
                 break;
             }
             case EventType::Cancel: {
-                auto r = book_.cancel(e.id);
+                const auto r = book_.cancel(e.id);
                 if (r.has_value()) {
-                    sink_.on_event(OutEvent{OutKind::Ack, e.id});
+                    sink_.on_event(OutEvent::ack(e.id));
                 } else {
-                    sink_.on_event(OutEvent{OutKind::Reject, e.id, OrderId{0}, Price{0}, Quantity{0}, r.error()});
+                    sink_.on_event(OutEvent::reject(e.id, r.error()));
                 }
                 break;
             }
             case EventType::Modify: {
-                const Sequence s = next_;
-                next_ = next_.next();
-                auto r = book_.modify(e.id, e.qty, s);
+                const auto r = book_.modify(e.id, e.qty, next_);
                 if (r.has_value()) {
-                    sink_.on_event(OutEvent{OutKind::Ack, e.id});
+                    next_ = next_.next();
+                    sink_.on_event(OutEvent::ack(e.id));
                 } else {
-                    sink_.on_event(OutEvent{OutKind::Reject, e.id, OrderId{0}, Price{0}, Quantity{0}, r.error()});
+                    sink_.on_event(OutEvent::reject(e.id, r.error()));
                 }
                 break;
             }
@@ -68,7 +65,7 @@ namespace dhft {
             const Quantity restingQty = resting->qty;
             const Sequence restingSeq = resting->seq;
 
-            sink_.on_event(OutEvent{OutKind::Trade, o.id, restingId, *best, fill});
+            sink_.on_event(OutEvent::trade(o.id, restingId, *best, fill));
 
             o.qty = o.qty - fill;
 
@@ -83,6 +80,6 @@ namespace dhft {
             const auto rested = book_.add(o);
             DHFT_CHECK_MSG(rested.has_value(), "residual of a validated order must rest");
         }
-        sink_.on_event(OutEvent{OutKind::Ack, o.id});
+        sink_.on_event(OutEvent::ack(o.id));
     }
 }

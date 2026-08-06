@@ -53,15 +53,14 @@ std::vector<InEvent> parse_script(std::istream& in) {
                 throw std::runtime_error("line " + std::to_string(lineNo) +
                                          ": expected 'N <id> <BUY|SELL> <price> <qty>'");
             }
-            events.push_back(InEvent{EventType::NewOrder, OrderId{id}, parse_side(sideTok, lineNo),
-                                     Price{px}, Quantity{qty}});
+            events.push_back(InEvent::new_order(OrderId{id}, parse_side(sideTok, lineNo),
+                                               Price{px}, Quantity{qty}));
         } else if (op == "C") {
             std::uint64_t id{};
             if (!(ls >> id)) {
                 throw std::runtime_error("line " + std::to_string(lineNo) + ": expected 'C <id>'");
             }
-            events.push_back(
-                InEvent{EventType::Cancel, OrderId{id}, Side::Buy, Price{0}, Quantity{0}});
+            events.push_back(InEvent::cancel(OrderId{id}));
         } else if (op == "M") {
             std::uint64_t id{};
             std::int64_t qty{};
@@ -69,8 +68,7 @@ std::vector<InEvent> parse_script(std::istream& in) {
                 throw std::runtime_error("line " + std::to_string(lineNo) +
                                          ": expected 'M <id> <qty>'");
             }
-            events.push_back(
-                InEvent{EventType::Modify, OrderId{id}, Side::Buy, Price{0}, Quantity{qty}});
+            events.push_back(InEvent::modify(OrderId{id}, Quantity{qty}));
         } else {
             throw std::runtime_error("line " + std::to_string(lineNo) + ": unknown op '" + op + "'");
         }

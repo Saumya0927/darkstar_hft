@@ -22,7 +22,7 @@ const char* reason_text(RejectReason r) {
 
 } // namespace
 
-void TextSink::on_event(const OutEvent& e) {
+void TextSink::on_event(const OutEvent& e) noexcept {
     switch (e.kind) {
     case OutKind::Trade:
         out_ << "TRADE  aggressor=" << e.id.v << " resting=" << e.resting.v

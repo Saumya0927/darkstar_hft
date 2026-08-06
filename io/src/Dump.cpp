@@ -1,12 +1,16 @@
 #include <dhft/io/Dump.h>
 
 #include <ostream>
+#include <utility>
+#include <vector>
 
 namespace dhft::io {
 
-void dump_book(const OrderBook& book, std::ostream& out, int levels) {
-    const auto asks = book.depth(Side::Sell, levels);
-    for (auto it = asks.rbegin(); it != asks.rend(); ++it) {
+void dump_book(const OrderBook& book, std::ostream& out, std::size_t levels) {
+    std::vector<std::pair<Price, Quantity>> rows;
+
+    book.depth_into(Side::Sell, levels, rows);
+    for (auto it = rows.rbegin(); it != rows.rend(); ++it) {
         out << "  ask " << it->first.ticks << " x" << it->second.v << '\n';
     }
 
@@ -16,7 +20,8 @@ void dump_book(const OrderBook& book, std::ostream& out, int levels) {
         out << "  ---\n";
     }
 
-    for (const auto& [price, qty] : book.depth(Side::Buy, levels)) {
+    book.depth_into(Side::Buy, levels, rows);
+    for (const auto& [price, qty] : rows) {
         out << "  bid " << price.ticks << " x" << qty.v << '\n';
     }
 }

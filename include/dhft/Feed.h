@@ -10,8 +10,14 @@
 namespace dhft {
 
     struct Feed {
-         virtual ~Feed() = default;
-         virtual bool next(InEvent& out) = 0;
+        Feed() = default;
+        Feed(const Feed&) = delete;
+        Feed& operator=(const Feed&) = delete;
+        Feed(Feed&&) = delete;
+        Feed& operator=(Feed&&) = delete;
+        virtual ~Feed() = default;
+
+        virtual bool next(InEvent& out) = 0;
     };
 
     class ScriptedFeed : public Feed {

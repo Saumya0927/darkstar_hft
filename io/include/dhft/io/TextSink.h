@@ -10,7 +10,7 @@ namespace dhft::io {
 class TextSink : public Sink {
 public:
     explicit TextSink(std::ostream& out) noexcept : out_{out} {}
-    void on_event(const OutEvent& e) override;
+    void on_event(const OutEvent& e) noexcept override;
 
 private:
     std::ostream& out_;

@@ -7,7 +7,7 @@ using namespace dhft;
 
 namespace {
 InEvent newOrder(std::uint64_t id, Side side, std::int64_t px, std::int64_t qty) {
-  return InEvent{EventType::NewOrder, OrderId{id}, side, Price{px}, Quantity{qty}};
+  return InEvent::new_order(OrderId{id}, side, Price{px}, Quantity{qty});
 }
 }
 
@@ -24,7 +24,7 @@ TEST(Matching, RestingOrderIsAcked) {
 TEST(Matching, CancelUnknownEmitsReject) {
   CollectingSink s;
   MatchingEngine e{s};
-  e.process(InEvent{EventType::Cancel, OrderId{99}, Side::Buy, Price{0}, Quantity{0}});
+  e.process(InEvent::cancel(OrderId{99}));
   ASSERT_EQ(s.all().size(), 1u);
   EXPECT_EQ(s.all()[0].kind, OutKind::Reject);
   EXPECT_EQ(s.all()[0].reason, RejectReason::UnknownOrder);
@@ -34,7 +34,7 @@ TEST(Matching, CancelKnownEmitsAck) {
   CollectingSink s;
   MatchingEngine e{s};
   e.process(newOrder(1, Side::Buy, 100, 5));
-  e.process(InEvent{EventType::Cancel, OrderId{1}, Side::Buy, Price{0}, Quantity{0}});
+  e.process(InEvent::cancel(OrderId{1}));
   ASSERT_EQ(s.all().size(), 2u);
   EXPECT_EQ(s.all()[1].kind, OutKind::Ack);
 }
@@ -178,7 +178,7 @@ TEST(Matching, IdIsReusableAfterCancel) {
   CollectingSink s;
   MatchingEngine e{s};
   e.process(newOrder(1, Side::Buy, 100, 5));
-  e.process(InEvent{EventType::Cancel, OrderId{1}, Side::Buy, Price{0}, Quantity{0}});
+  e.process(InEvent::cancel(OrderId{1}));
   e.process(newOrder(1, Side::Buy, 101, 3));
   EXPECT_EQ(s.all().back().kind, OutKind::Ack);
   ASSERT_TRUE(e.book().best_bid());
