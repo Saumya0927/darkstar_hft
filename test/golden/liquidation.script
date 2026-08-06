@@ -1,0 +1,6 @@
+# one large sell consumes every resting bid
+N 1 BUY 100 5
+N 2 BUY 99  5
+N 3 BUY 98  5
+N 4 BUY 97  5
+N 5 SELL 90 18

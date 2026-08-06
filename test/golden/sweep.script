@@ -1,0 +1,6 @@
+# an aggressive buy sweeps three ask levels and rests the remainder
+N 1 SELL 100 5
+N 2 SELL 101 5
+N 3 SELL 102 5
+N 4 SELL 100 2
+N 5 BUY  102 20

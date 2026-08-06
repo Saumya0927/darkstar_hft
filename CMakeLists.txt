@@ -30,6 +30,9 @@ target_link_libraries(dhft PUBLIC dhft_options)
 # Text I/O module (script parsing, human-readable output), built on the core engine.
 add_subdirectory(io)
 
+# Test-only support library (golden harness, generators).
+add_subdirectory(testkit)
+
 # GoogleTest, fetched at configure time (no manual checkout).
 include(FetchContent)
 FetchContent_Declare(

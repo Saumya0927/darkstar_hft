@@ -1,0 +1,13 @@
+--- events ---
+ACK    id=1
+REJECT id=1 reason=DUPLICATE_ORDER_ID
+REJECT id=2 reason=BAD_QUANTITY
+REJECT id=3 reason=BAD_QUANTITY
+REJECT id=99 reason=UNKNOWN_ORDER
+REJECT id=99 reason=UNKNOWN_ORDER
+REJECT id=1 reason=BAD_QUANTITY
+ACK    id=1
+ACK    id=1
+--- book ---
+  ask 105 x2
+  ---

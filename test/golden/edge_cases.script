@@ -1,0 +1,10 @@
+# every rejection path plus id reuse after cancel
+N 1 BUY 100 5
+N 1 BUY 101 3
+N 2 BUY 100 0
+N 3 BUY 100 -4
+C 99
+M 99 5
+M 1 0
+C 1
+N 1 SELL 105 2

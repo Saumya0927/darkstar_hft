@@ -1,0 +1,13 @@
+--- events ---
+ACK    id=1
+ACK    id=2
+ACK    id=3
+ACK    id=1
+ACK    id=2
+ACK    id=3
+TRADE  aggressor=4 resting=1 price=100 qty=2
+TRADE  aggressor=4 resting=2 price=100 qty=2
+ACK    id=4
+--- book ---
+  ---
+  bid 100 x7

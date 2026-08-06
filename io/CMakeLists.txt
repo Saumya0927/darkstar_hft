@@ -1,6 +1,7 @@
 # Text I/O for the engine: order-script parsing and human-readable event output.
 # Separate from the core engine library so `dhft` stays free of file/stream concerns.
 add_library(dhft_io STATIC
+  src/Dump.cpp
   src/Script.cpp
   src/TextSink.cpp
 )

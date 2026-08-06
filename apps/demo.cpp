@@ -2,36 +2,13 @@
 //   usage: ./demo [script-file]      (default: data/scripts/simple.txt)
 #include <dhft/Feed.h>
 #include <dhft/MatchingEngine.h>
+#include <dhft/io/Dump.h>
 #include <dhft/io/Script.h>
 #include <dhft/io/TextSink.h>
 
 #include <exception>
 #include <iostream>
 #include <string>
-
-namespace {
-
-void print_book(const dhft::OrderBook& book) {
-    std::cout << "\n--- final book ---\n";
-
-    const auto asks = book.depth(dhft::Side::Sell, 5);
-    for (auto it = asks.rbegin(); it != asks.rend(); ++it) { // worst ask on top
-        std::cout << "  ask " << it->first.ticks << "  x" << it->second.v << '\n';
-    }
-
-    if (book.best_bid() && book.best_ask()) {
-        std::cout << "  --- spread " << (book.best_ask()->ticks - book.best_bid()->ticks)
-                  << " ---\n";
-    } else {
-        std::cout << "  ---\n";
-    }
-
-    for (const auto& [price, qty] : book.depth(dhft::Side::Buy, 5)) { // best bid first
-        std::cout << "  bid " << price.ticks << "  x" << qty.v << '\n';
-    }
-}
-
-} // namespace
 
 int main(int argc, char** argv) {
     try {
@@ -47,7 +24,8 @@ int main(int argc, char** argv) {
             engine.process(e);
         }
 
-        print_book(engine.book());
+        std::cout << "\n--- final book ---\n";
+        dhft::io::dump_book(engine.book(), std::cout);
         return 0;
     } catch (const std::exception& ex) {
         std::cerr << "error: " << ex.what() << '\n';

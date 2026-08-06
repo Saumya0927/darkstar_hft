@@ -1,0 +1,12 @@
+--- events ---
+ACK    id=1
+ACK    id=2
+ACK    id=3
+ACK    id=4
+ACK    id=5
+--- book ---
+  ask 103 x6
+  ask 102 x4
+  --- spread 2 ---
+  bid 100 x10
+  bid 99 x5

@@ -16,3 +16,6 @@ dhft_add_test(orderbook_test   dhft)       # Tasks 3-5
 dhft_add_test(seams_test       dhft)       # Task 7
 dhft_add_test(matching_test    dhft)       # Task 6
 dhft_add_test(integration_test dhft_io)    # Task 8
+dhft_add_test(golden_test      dhft_testkit)  # Task 3
+target_compile_definitions(golden_test PRIVATE
+  DHFT_GOLDEN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/golden")

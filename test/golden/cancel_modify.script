@@ -1,0 +1,8 @@
+# queue position: decrease keeps it, increase loses it
+N 1 BUY 100 5
+N 2 BUY 100 5
+N 3 BUY 100 5
+M 1 2
+M 2 9
+C 3
+N 4 SELL 100 4
