@@ -4,6 +4,7 @@
 #include <dhft/reference/NaiveEngine.h>
 #include <dhft/testkit/Generate.h>
 #include <dhft/testkit/Golden.h>
+#include <dhft/testkit/Shrink.h>
 #include <gtest/gtest.h>
 
 #include <algorithm>
@@ -44,16 +45,54 @@ std::string describe(const OutEvent& e) {
   return s.str();
 }
 
+bool diverges(const std::vector<InEvent>& script) {
+  return runFast(script) != runReference(script);
+}
+
+std::string describeScript(const std::vector<InEvent>& script) {
+  std::ostringstream s;
+  for (const auto& e : script) {
+    switch (e.type) {
+    case EventType::NewOrder:
+      s << "  N " << e.id.v << (e.side == Side::Buy ? " BUY  " : " SELL ") << e.price.ticks
+        << " " << e.qty.v << '\n';
+      break;
+    case EventType::Cancel: s << "  C " << e.id.v << '\n'; break;
+    case EventType::Modify: s << "  M " << e.id.v << " " << e.qty.v << '\n'; break;
+    }
+  }
+  return s.str();
+}
+
+// On divergence the script is minimised first, so the failure reports the shortest
+// sequence that still reproduces it rather than the original few hundred events.
 void expectSameStream(const std::vector<InEvent>& script, const std::string& label) {
-  const auto fast = runFast(script);
-  const auto slow = runReference(script);
+  if (!diverges(script)) {
+    return;
+  }
+
+  const auto minimal = shrink(script, diverges);
+  const auto fast = runFast(minimal);
+  const auto slow = runReference(minimal);
+
+  std::ostringstream detail;
+  detail << label << " diverged\n  minimal reproducer (" << minimal.size() << " of "
+         << script.size() << " events):\n"
+         << describeScript(minimal);
 
   const std::size_t n = std::min(fast.size(), slow.size());
   for (std::size_t i = 0; i < n; ++i) {
-    ASSERT_EQ(fast[i], slow[i]) << label << " diverged at output " << i << "\n  fast: "
-                                << describe(fast[i]) << "\n  ref:  " << describe(slow[i]);
+    if (!(fast[i] == slow[i])) {
+      detail << "  first difference at output " << i << "\n    fast: " << describe(fast[i])
+             << "\n    ref:  " << describe(slow[i]) << '\n';
+      break;
+    }
   }
-  ASSERT_EQ(fast.size(), slow.size()) << label << ": output stream lengths differ";
+  if (fast.size() != slow.size()) {
+    detail << "  output lengths differ: fast=" << fast.size() << " ref=" << slow.size() << '\n';
+  }
+
+  FAIL() << detail.str();
 }
 
 void expectSameLadder(const OrderBook& fast, const reference::NaiveEngine& slow, Side side,

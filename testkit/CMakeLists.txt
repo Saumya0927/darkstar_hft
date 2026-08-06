@@ -2,6 +2,7 @@
 add_library(dhft_testkit STATIC
   src/Generate.cpp
   src/Golden.cpp
+  src/Shrink.cpp
 )
 target_include_directories(dhft_testkit PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(dhft_testkit PUBLIC dhft_io)
