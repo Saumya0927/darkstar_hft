@@ -1,5 +1,7 @@
 #include <dhft/bench/Samples.h>
 
+#include <dhft/Check.h>
+
 #include <mach/mach_time.h>
 
 #include <algorithm>
@@ -30,6 +32,7 @@ void Samples::finalise() {
 }
 
 double Samples::percentile_ns(double p) const {
+    DHFT_CHECK_MSG(sorted_ || ticks_.empty(), "call finalise() before reading percentiles");
     if (ticks_.empty()) {
         return 0.0;
     }
@@ -40,6 +43,7 @@ double Samples::percentile_ns(double p) const {
 }
 
 double Samples::max_ns() const {
+    DHFT_CHECK_MSG(sorted_ || ticks_.empty(), "call finalise() before reading percentiles");
     if (ticks_.empty()) {
         return 0.0;
     }
@@ -47,6 +51,7 @@ double Samples::max_ns() const {
 }
 
 std::size_t Samples::count_over_ns(double ns) const {
+    DHFT_CHECK_MSG(sorted_ || ticks_.empty(), "call finalise() before reading percentiles");
     const auto threshold = static_cast<std::uint32_t>(std::ceil(ns / tick_ns()));
     return static_cast<std::size_t>(
         std::distance(std::upper_bound(ticks_.begin(), ticks_.end(), threshold), ticks_.end()));

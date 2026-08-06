@@ -72,7 +72,18 @@ TailResult run_tail(const std::vector<InEvent>& script, std::size_t warmup) {
         engine.process(script[i]);
     }
 
-    TailResult r{script.size() - start};
+    std::size_t nNew = 0;
+    std::size_t nCancel = 0;
+    std::size_t nModify = 0;
+    for (std::size_t i = start; i < script.size(); ++i) {
+        switch (script[i].type) {
+        case EventType::NewOrder: ++nNew; break;
+        case EventType::Cancel: ++nCancel; break;
+        case EventType::Modify: ++nModify; break;
+        }
+    }
+
+    TailResult r{script.size() - start, nNew, nCancel, nModify};
     r.atStart = measure_depth(engine.book());
     for (std::size_t i = start; i < script.size(); ++i) {
         const std::uint64_t a = now_ticks();

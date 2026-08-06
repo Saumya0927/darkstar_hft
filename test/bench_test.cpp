@@ -186,3 +186,35 @@ TEST(Harness, ReportsAPlausibleCost) {
   EXPECT_GT(r.nsPerEvent, 1.0);
   EXPECT_LT(r.nsPerEvent, 100000.0);
 }
+
+TEST(Samples, RefusesToAnswerFromUnsortedData) {
+  Samples s{16};
+  s.add(90);
+  s.add(10);
+  EXPECT_DEATH((void)s.percentile_ns(0.5), "finalise");
+}
+
+TEST(Samples, EmptyIsAnsweredWithoutFinalise) {
+  Samples s{16};
+  EXPECT_DOUBLE_EQ(s.percentile_ns(0.5), 0.0);
+  EXPECT_DOUBLE_EQ(s.max_ns(), 0.0);
+}
+
+TEST(Samples, FinaliseIsIdempotent) {
+  Samples s{16};
+  s.add(3);
+  s.add(1);
+  s.finalise();
+  const double first = s.percentile_ns(1.0);
+  s.finalise();
+  EXPECT_DOUBLE_EQ(s.percentile_ns(1.0), first);
+}
+
+TEST(Harness, PerTypeBuffersAreSizedNotOverAllocated) {
+  const auto s = script(20000);
+  const auto t = run_tail(s, 5000);
+  EXPECT_GT(t.newOrder.count(), 0u);
+  EXPECT_GT(t.cancel.count(), 0u);
+  EXPECT_GT(t.modify.count(), 0u);
+  EXPECT_EQ(t.newOrder.count() + t.cancel.count() + t.modify.count(), t.all.count());
+}

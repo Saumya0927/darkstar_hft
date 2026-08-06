@@ -75,3 +75,21 @@ TEST(Counters, MeasuresRealWorkWhenAvailable) {
   EXPECT_GT(s.cycles, 0u);
   EXPECT_GT(s.instructions, 0u);
 }
+
+TEST(Counters, SecondInstanceDoesNotFightForThePmu) {
+  Counters a;
+  Counters b;
+  EXPECT_FALSE(a.available() && b.available())
+      << "two live readers must not both claim the PMU";
+}
+
+TEST(Counters, PmuIsReleasedWhenTheReaderDies) {
+  bool firstWorked = false;
+  {
+    Counters a;
+    firstWorked = a.available();
+  }
+  Counters b;
+  EXPECT_EQ(b.available(), firstWorked)
+      << "a fresh reader must succeed again after the previous one released the PMU";
+}

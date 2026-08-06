@@ -53,6 +53,12 @@ constexpr std::array<Alias, 4> kAliases{{
      {"BRANCH_MISPRED_NONSPEC", "BRANCH_MISPREDICT", "BR_MISP_RETIRED.ALL_BRANCHES", nullptr}},
 }};
 
+// kpc_force_all_ctrs_set(1) claims the PMU process-wide; two live readers would fight.
+bool& pmu_claimed() {
+    static bool claimed = false;
+    return claimed;
+}
+
 template <typename Fn> bool load(void* handle, const char* name, Fn& out) {
     out = reinterpret_cast<Fn>(dlsym(handle, name));
     return out != nullptr;
@@ -73,11 +79,15 @@ struct Counters::Impl {
     std::vector<std::string> events;
 
     std::uint32_t classes{0};
-    std::size_t counterCount{0};
+    bool claimedPmu{false};
     std::array<std::size_t, kMaxCounters> map{};
     std::array<std::uint64_t, kMaxCounters> before{};
 
     ~Impl() {
+        if (claimedPmu && k.kpc_force_all_ctrs_set != nullptr) {
+            k.kpc_force_all_ctrs_set(0);
+            pmu_claimed() = false;
+        }
         if (cfg != nullptr && d.kpep_config_free != nullptr) {
             d.kpep_config_free(cfg);
         }
@@ -158,8 +168,9 @@ struct Counters::Impl {
             return false;
         }
 
+        std::size_t configured = 0;
         if (d.kpep_config_kpc_classes(cfg, &classes) != 0 ||
-            d.kpep_config_kpc_count(cfg, &counterCount) != 0 || counterCount > kMaxCounters ||
+            d.kpep_config_kpc_count(cfg, &configured) != 0 || configured > kMaxCounters ||
             d.kpep_config_kpc_map(cfg, map.data(), sizeof(std::size_t) * kMaxCounters) != 0) {
             status = "kpep counter mapping failed";
             return false;
@@ -174,10 +185,16 @@ struct Counters::Impl {
             return false;
         }
         // Every step below needs root; this is where a normal user is rejected.
+        if (pmu_claimed()) {
+            status = "PMU already claimed by another Counters instance";
+            return false;
+        }
         if (k.kpc_force_all_ctrs_set(1) != 0) {
             status = "PMU access denied (run as root)";
             return false;
         }
+        claimedPmu = true;
+        pmu_claimed() = true;
         if ((classes & kClassConfigurable) != 0 && k.kpc_set_config(classes, regs.data()) != 0) {
             status = "kpc_set_config failed";
             return false;

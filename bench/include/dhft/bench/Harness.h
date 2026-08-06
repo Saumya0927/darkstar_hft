@@ -42,8 +42,8 @@ struct TailResult {
     BookDepth atStart{};
     BookDepth atEnd{};
 
-    explicit TailResult(std::size_t capacity)
-        : all{capacity}, newOrder{capacity}, cancel{capacity}, modify{capacity} {}
+    TailResult(std::size_t total, std::size_t nNew, std::size_t nCancel, std::size_t nModify)
+        : all{total}, newOrder{nNew}, cancel{nCancel}, modify{nModify} {}
 };
 
 [[nodiscard]] BatchResult run_batch(const std::vector<InEvent>& script, std::size_t warmup);
