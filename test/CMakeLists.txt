@@ -9,6 +9,7 @@ endfunction()
 
 dhft_add_test(smoke_test       dhft)
 dhft_add_test(check_test       dhft)       # Task 1
+dhft_add_test(validate_test    dhft)       # Task 2
 dhft_add_test(types_test       dhft)       # Task 1
 dhft_add_test(events_test      dhft)       # Task 2
 dhft_add_test(orderbook_test   dhft)       # Tasks 3-5

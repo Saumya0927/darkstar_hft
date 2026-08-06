@@ -8,6 +8,7 @@
 #include <list>
 #include <map>
 #include <optional>
+#include <string>
 #include <vector>
 #include <unordered_map>
 #include <utility>
@@ -24,6 +25,8 @@ namespace dhft {
         [[nodiscard]] std::expected<void, RejectReason> cancel(OrderId id);
         [[nodiscard]] std::expected<void, RejectReason> modify(OrderId id, Quantity newQty, Sequence newSeq);
         [[nodiscard]] const Order* front_at(Side side, Price price) const noexcept;
+        [[nodiscard]] Quantity total_quantity(Side side) const noexcept;
+        [[nodiscard]] std::expected<void, std::string> validate() const;
 
     private:
         using Level = std::list<Order>;
