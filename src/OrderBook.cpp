@@ -72,7 +72,7 @@ namespace dhft {
         return {};
     }
 
-    std::expected<void, RejectReason> OrderBook::modify(OrderId id, Quantity newQty) {
+    std::expected<void, RejectReason> OrderBook::modify(OrderId id, Quantity newQty, Sequence newSeq) {
         if (!newQty.positive())
             return std::unexpected(RejectReason::BadQuantity);
 
@@ -89,6 +89,7 @@ namespace dhft {
 
         Order updated = *loc.node;
         updated.qty = newQty;
+        updated.seq = newSeq;
         (void)cancel(id);
         add(updated);
         return {};

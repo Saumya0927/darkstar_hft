@@ -25,7 +25,9 @@ namespace dhft {
                 break;
             }
             case EventType::Modify: {
-                auto r = book_.modify(e.id, e.qty);
+                const Sequence s = next_;
+                next_ = next_.next();
+                auto r = book_.modify(e.id, e.qty, s);
                 if (r.has_value()) {
                     sink_.on_event(OutEvent{OutKind::Ack, e.id});
                 } else {
@@ -53,6 +55,7 @@ namespace dhft {
 
             const OrderId restingId = resting->id;
             const Quantity restingQty = resting->qty;
+            const Sequence restingSeq = resting->seq;
 
             sink_.on_event(OutEvent{OutKind::Trade, o.id, restingId, *best, fill});
 
@@ -61,7 +64,7 @@ namespace dhft {
             if (fill == restingQty) {
                 (void)book_.cancel(restingId);
             } else {
-                (void)book_.modify(restingId, restingQty - fill);
+                (void)book_.modify(restingId, restingQty - fill, restingSeq);
             }
         }
 
