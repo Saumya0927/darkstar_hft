@@ -1,4 +1,5 @@
 add_library(dhft_bench STATIC
+  src/Counters.cpp
   src/Harness.cpp
   src/Samples.cpp
 )

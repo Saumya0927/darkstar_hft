@@ -1,3 +1,4 @@
+#include <dhft/bench/Counters.h>
 #include <dhft/bench/Harness.h>
 #include <dhft/testkit/Generate.h>
 
@@ -110,6 +111,17 @@ int main(int argc, char** argv) {
 
     const auto tail = dhft::bench::run_tail(script, opt.warmup);
 
+    dhft::bench::Counters counters;
+    dhft::bench::CounterSample counted;
+    if (counters.available()) {
+        counters.begin();
+        const auto counting = dhft::bench::run_batch(script, opt.warmup);
+        counted = counters.end();
+        if (counting.checksum != checksum) {
+            checksumStable = false;
+        }
+    }
+
     if (opt.json) {
         std::printf("{\n");
         std::printf("  \"events\": %zu,\n", lastBatch.events);
@@ -134,8 +146,18 @@ int main(int argc, char** argv) {
         std::printf("  \"over_1us\": %zu,\n", tail.all.count_over_ns(1000.0));
         std::printf("  \"over_10us\": %zu,\n", tail.all.count_over_ns(10000.0));
         std::printf("  \"checksum\": \"%016llx\",\n", static_cast<unsigned long long>(checksum));
-        std::printf("  \"checksum_stable\": %s\n", checksumStable ? "true" : "false");
-        std::printf("}\n");
+        std::printf("  \"checksum_stable\": %s,\n", checksumStable ? "true" : "false");
+        std::printf("  \"counters_available\": %s,\n", counters.available() ? "true" : "false");
+        std::printf("  \"counters_status\": \"%s\"", counters.status().c_str());
+        if (counted.valid) {
+            const auto ev = static_cast<double>(lastBatch.events);
+            std::printf(",\n  \"cycles_per_event\": %.2f,\n", static_cast<double>(counted.cycles) / ev);
+            std::printf("  \"instructions_per_event\": %.2f,\n",
+                        static_cast<double>(counted.instructions) / ev);
+            std::printf("  \"branch_misses_per_event\": %.4f",
+                        static_cast<double>(counted.branchMisses) / ev);
+        }
+        std::printf("\n}\n");
         return checksumStable ? 0 : 1;
     }
 
@@ -170,6 +192,20 @@ int main(int argc, char** argv) {
                 tail.cancel.percentile_ns(0.999), tail.cancel.count());
     std::printf("  modify  %8.1f / %8.1f   (%zu samples)\n", tail.modify.percentile_ns(0.99),
                 tail.modify.percentile_ns(0.999), tail.modify.count());
+
+    std::printf("\nhardware counters: %s\n", counters.status().c_str());
+    if (counted.valid) {
+        const auto ev = static_cast<double>(lastBatch.events);
+        std::printf("  cycles/event        %8.2f\n", static_cast<double>(counted.cycles) / ev);
+        std::printf("  instructions/event  %8.2f\n",
+                    static_cast<double>(counted.instructions) / ev);
+        std::printf("  IPC                 %8.2f\n",
+                    counted.cycles == 0 ? 0.0
+                                        : static_cast<double>(counted.instructions) /
+                                              static_cast<double>(counted.cycles));
+        std::printf("  branch misses/event %8.4f\n",
+                    static_cast<double>(counted.branchMisses) / ev);
+    }
 
     std::printf("\nchecksum %016llx  %s\n", static_cast<unsigned long long>(checksum),
                 checksumStable ? "(stable)" : "(UNSTABLE -- behaviour changed between runs)");
