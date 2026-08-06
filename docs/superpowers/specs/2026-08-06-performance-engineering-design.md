@@ -68,6 +68,38 @@ single event reads as 42 or 83 ns, never 64.
 
 The tail is what this milestone targets, and the tail is what remains measurable.
 
+### The tail exists, and is worth attacking (measured)
+
+Per-event timing over a 400000-event script after warm-up, on the current engine:
+
+```
+p50 = 83 ns   p90 = 166   p99 = 292   p99.9 = 833   p99.99 = 1500   max = 115875
+events over 1 us: 244 (0.07%)     over 10 us: 4
+```
+
+P99.9 is ten times the median and the maximum is over a thousand times it. There is a real
+tail, so this milestone is not optimising something that does not exist.
+
+### The instrument distorts what it measures
+
+```
+timer read pair: p50 = 41 ns ... max = 18084 ns
+```
+
+Two consequences that constrain every conclusion drawn from wall-clock data:
+
+1. **Bracketing a ~64 ns event costs ~41 ns of timer.** Roughly 40% of a per-event
+   measurement is the instrument. This is harmless for detecting microsecond stalls but
+   makes per-event medians meaningless. **A median may only be quoted from batch timing;
+   a per-event p50 is not a valid number and must not appear in the log.**
+2. **The timer itself occasionally stalls 18 us.** Part of any observed tail is the OS
+   descheduling the thread or a timer hiccup, not the engine.
+
+Point 2 is why the kperf counter reader is load-bearing rather than optional: per-thread
+PMU counters accumulate only while the thread is actually running, so a cycle count
+excludes descheduling. Wall-clock time alone cannot distinguish an engine stall from a
+preemption, and this milestone's entire subject is stalls.
+
 ### Other platform facts
 
 - **No CPU pinning exists on macOS.** `THREAD_AFFINITY_POLICY` is a hint about L2 sharing,
@@ -122,7 +154,10 @@ benchmarking a stateful matching engine:
 - **A fixed, recorded script**, generated once with a known seed and committed, so every
   build is compared against identical input. Not regenerated per run.
 - **Warm-up to a steady-state book** before recording, so measurements are not dominated by
-  an empty-book ramp. The warm-up prefix is discarded.
+  an empty-book ramp. The warm-up prefix is discarded. **"Steady state" must be a stated
+  target book depth** (resting order count and populated level count), recorded in the log
+  alongside every measurement: per-event cost depends on book size, so runs at different
+  depths are not comparable.
 - **Percentiles reported per event type** (new / cancel / modify), because pooling
   heterogeneous operations smears the distribution and hides which one regressed.
 - **Deterministic, non-bursty input** — the script drives the engine directly with no
@@ -150,8 +185,10 @@ An improvement counts only if it survives:
 - **At least 9 repetitions** per configuration — google/benchmark's own
   `UTEST_OPTIMAL_REPETITIONS` constant, described in their source as "lowest reasonable
   number, more is better."
-- **A Mann-Whitney U test** between baseline and candidate sample sets, alpha 0.05 — the
-  same test `tools/compare.py` applies.
+- **A Mann-Whitney U test** between baseline and candidate, alpha 0.05 — the same test
+  `tools/compare.py` applies. The samples must be named explicitly and are not
+  interchangeable: for throughput, the per-repetition **batch means**; for the tail, the
+  per-repetition **P99 (or P99.9) values**. One test per metric.
 - **An empirically established noise floor**: the identical binary run 20-30 times, with
   the observed spread in P50/P99/P99.9 recorded. A change smaller than that spread is not
   a result.
@@ -186,14 +223,32 @@ today:  id(8) side(1) pad(7) price(8) qty(8) seq(8)             = 40 bytes
 target: price(4) qty(4) seq(4) next(4) prev(4) side(1) pad(3)   = 24 bytes
 ```
 
-Two ideas do the work: with a slot map the **order's identity is its slot index**, so `id`
-need not be stored at all; and 32-bit fields plus 32-bit intrusive links replace 64-bit
-ones. Price and side are **kept**, matching every real implementation studied.
+32-bit fields plus 32-bit intrusive links replace 64-bit ones. Price and side are **kept**,
+matching every real implementation studied.
 
-**Open decision, to be settled with measurement:** narrowing `Quantity` to 32 bits caps it
-near 2.1 billion and is what reaches 24 bytes. Keeping 64-bit quantity lands at 32 bytes.
-32 bytes still fits four records per 128-byte cache line; 24 fits five. The cap is
-irrelevant for futures-scale quantities but is a real semantic change at the API boundary.
+**The `id` field depends on a storage decision, and the two options are mutually
+exclusive. This must be chosen before implementation.**
+
+- **Design A — storage indexed directly by `id - base`.** The order's identity *is* its
+  index, so `id` is not stored and 24 bytes is reachable. The cost: ids are monotonic and
+  never reused, so slots are never reclaimed and memory grows with every id ever issued
+  rather than with live orders (about 5.8 MB across a 400000-event script; unbounded over
+  a long session without periodic rebasing).
+- **Design B — a slot map `id -> pool index`, with a pooled free list.** Memory tracks
+  *live* orders and stays small. But the pool index does not encode the id, and trade
+  reports must name the resting order, so **`id` must be stored** and the record lands at
+  28-32 bytes.
+
+"24 bytes" and "reuse freed slots" cannot both be had. Design A is the simpler fit for a
+session-scoped engine and reaches the size target; Design B is what a long-running process
+needs. Decide explicitly, record the reason, and size the benchmark accordingly.
+
+**Second open decision:** narrowing `Quantity` to 32 bits caps it near 2.1 billion and is
+what reaches 24 bytes under Design A. Keeping 64-bit quantity adds 4 bytes. 32 bytes still
+fits four records per 128-byte cache line; 24 fits five. The cap is irrelevant at
+futures scale, but capping is a **behaviour change**: oversized quantities must be
+rejected with a stated `RejectReason`, and `NaiveEngine` must adopt the identical rule or
+equivalence will fail for the wrong reason.
 
 **Consequence:** the public API keeps taking and returning `Order`, while storage uses a
 compact internal record. `front_at` currently returns `const Order*` pointing into storage;
