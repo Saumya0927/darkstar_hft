@@ -369,5 +369,12 @@ All continue to run under AddressSanitizer and UndefinedBehaviorSanitizer.
 5. The fast engine and the reference model produce identical output on every golden
    script and on at least 500 random scripts.
 6. Everything clean under ASan and UBSan.
-7. **The user wrote the sequence fix, `validate()`, `total_quantity()`, the properties,
-   and the reference model**, and can explain each.
+7. Authorship, as it actually happened: the user wrote the Task 0 sequence fix. The user
+   then chose to delegate `validate()`, `total_quantity()`, the properties, the reference
+   model, and the shrinker to the assistant. The original criterion required the user to
+   write all of them; that was consciously traded away for pace, and coach mode resumes
+   at Milestone 3.
+
+8. Task 8 (shrinking) was completed rather than skipped: equivalence failures now report a
+   minimal reproducer. Verified by mutation — a broken FIFO in a 200-event script reduced
+   to the 5 events that are actually required to expose it.
