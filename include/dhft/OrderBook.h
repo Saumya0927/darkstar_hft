@@ -20,9 +20,9 @@ namespace dhft {
     public:
 
         struct Fill {
-            OrderId restingId;
-            Quantity filled;
-            bool levelEmptied;
+            OrderId restingId{};
+            Quantity filled{};
+            bool levelEmptied{};
         };
 
         [[nodiscard]] std::expected<void, RejectReason> add(const Order& o);
@@ -33,10 +33,10 @@ namespace dhft {
                                                                     std::size_t levels) const;
         void depth_into(Side side, std::size_t levels,
                         std::vector<std::pair<Price, Quantity>>& out) const;
-        [[nodiscard]] std::expected<void, RejectReason> cancel(OrderId id);
+        [[nodiscard]] std::expected<void, RejectReason> cancel(OrderId id) noexcept;
         [[nodiscard]] std::expected<void, RejectReason> modify(OrderId id, Quantity newQty, Sequence newSeq);
         [[nodiscard]] std::optional<Order> front_at(Side side, Price price) const noexcept;
-        [[nodiscard]] std::optional<Fill> take_from_front(Side side, Price price, Quantity want);
+        [[nodiscard]] std::optional<Fill> take_from_front(Side side, Price price, Quantity want) noexcept;
         [[nodiscard]] Quantity total_quantity(Side side) const noexcept;
         [[nodiscard]] std::expected<void, std::string> validate() const;
 

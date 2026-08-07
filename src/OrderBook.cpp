@@ -102,7 +102,7 @@ namespace dhft {
         return result;
     }
 
-    std::expected<void, RejectReason> OrderBook::cancel(OrderId id) {
+    std::expected<void, RejectReason> OrderBook::cancel(OrderId id) noexcept {
         auto it = index_.find(id);
         if (it == index_.end())
             return std::unexpected(RejectReason::UnknownOrder);
@@ -315,7 +315,7 @@ namespace dhft {
         return {};
     }
 
-    std::optional<OrderBook::Fill> OrderBook::take_from_front(Side side, Price price, Quantity want) {
+    std::optional<OrderBook::Fill> OrderBook::take_from_front(Side side, Price price, Quantity want) noexcept {
         auto takeFrom = [&](auto& m) -> std::optional<Fill> {
             auto lvlIt = m.find(price);
             if (lvlIt == m.end())
