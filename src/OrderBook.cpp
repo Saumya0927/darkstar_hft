@@ -1,12 +1,11 @@
-#include "dhft/Events.h"
-#include "dhft/Types.h"
+#include <dhft/Events.h>
+#include <dhft/Types.h>
 #include <cstdint>
 #include <dhft/Check.h>
 #include <dhft/OrderBook.h>
 #include <expected>
 #include <optional>
 #include <utility>
-
 
 namespace dhft {
 
@@ -133,7 +132,6 @@ namespace dhft {
         index_.erase(it);
         return {};
 
-
     }
 
     std::expected<void, RejectReason> OrderBook::modify(OrderId id, Quantity newQty, Sequence newSeq) {
@@ -208,10 +206,10 @@ namespace dhft {
 
         auto check_level = [&](Price price, const Level& level,
                                Side side) -> std::expected<void, std::string> {
-            const std::string at = " at price " + std::to_string(price.ticks);
+            auto at = [price] { return " at price " + std::to_string(price.ticks); };
 
             if (level.head == kNull || level.tail == kNull) {
-                return std::unexpected("empty level" + at);
+                return std::unexpected("empty level" + at());
             }
 
             std::uint32_t prevIdx = kNull;
@@ -220,7 +218,7 @@ namespace dhft {
 
             for (std::uint32_t i = level.head; i != kNull; i = pool_[i].next) {
                 if (i >= pool_.size()) {
-                    return std::unexpected("link out of range" + at);
+                    return std::unexpected("link out of range" + at());
                 }
                 if (seen[i]) {
                     return std::unexpected("slot " + std::to_string(i) +
@@ -230,32 +228,32 @@ namespace dhft {
                 ++counted;
 
                 const Slot& s = pool_[i];
-                const std::string who = "order " + std::to_string(s.id);
+                auto who = [&s] { return "order " + std::to_string(s.id); };
 
                 if (s.qty <= 0) {
-                    return std::unexpected(who + " has non-positive quantity");
+                    return std::unexpected(who() + " has non-positive quantity");
                 }
                 if (Price{s.price} != price) {
-                    return std::unexpected(who + " price " + std::to_string(s.price) +
-                                           " does not match its level" + at);
+                    return std::unexpected(who() + " price " + std::to_string(s.price) +
+                                           " does not match its level" + at());
                 }
                 if (static_cast<Side>(s.side) != side) {
-                    return std::unexpected(who + " sits on the wrong side of the book");
+                    return std::unexpected(who() + " sits on the wrong side of the book");
                 }
                 if (s.prev != prevIdx) {
-                    return std::unexpected("backward link is broken at " + who);
+                    return std::unexpected("backward link is broken at " + who());
                 }
 
                 const auto entry = index_.find(OrderId{s.id});
                 if (entry == index_.end()) {
-                    return std::unexpected(who + " is missing from the index");
+                    return std::unexpected(who() + " is missing from the index");
                 }
                 if (entry->second != i) {
-                    return std::unexpected("index entry for " + who + " is stale");
+                    return std::unexpected("index entry for " + who() + " is stale");
                 }
 
                 if (!first && !(prevSeq < Sequence{s.seq})) {
-                    return std::unexpected("sequence is not ascending" + at + ", " + who +
+                    return std::unexpected("sequence is not ascending" + at() + ", " + who() +
                                            " has sequence " + std::to_string(s.seq));
                 }
 
@@ -265,7 +263,7 @@ namespace dhft {
             }
 
             if (prevIdx != level.tail) {
-                return std::unexpected("tail does not end the chain" + at);
+                return std::unexpected("tail does not end the chain" + at());
             }
             return {};
         };
@@ -316,7 +314,6 @@ namespace dhft {
 
         return {};
     }
-
 
     std::optional<OrderBook::Fill> OrderBook::take_from_front(Side side, Price price, Quantity want) {
         auto takeFrom = [&](auto& m) -> std::optional<Fill> {

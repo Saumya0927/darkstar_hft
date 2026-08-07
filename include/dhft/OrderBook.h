@@ -14,7 +14,6 @@
 #include <unordered_map>
 #include <utility>
 
-
 namespace dhft {
 
     class OrderBook {
