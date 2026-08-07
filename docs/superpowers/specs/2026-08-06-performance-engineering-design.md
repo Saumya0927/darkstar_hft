@@ -239,9 +239,26 @@ exclusive. This must be chosen before implementation.**
   reports must name the resting order, so **`id` must be stored** and the record lands at
   28-32 bytes.
 
-"24 bytes" and "reuse freed slots" cannot both be had. Design A is the simpler fit for a
-session-scoped engine and reaches the size target; Design B is what a long-running process
-needs. Decide explicitly, record the reason, and size the benchmark accordingly.
+"24 bytes" and "reuse freed slots" cannot both be had.
+
+**DECIDED 2026-08-06: Design B**, on measured evidence rather than the size headline.
+
+Measured on the 400000-event benchmark: 232981 ids issued, 27626 peak resting, a ratio of
+8.4 to 1. That ratio is what settles it. Design A's array would be only **11.9% occupied**,
+so a 128-byte cache line holding 5 records would carry about 0.6 live ones; the live working
+set would span roughly 3.5 MB of cache lines. Design B's pool is 100% live and spans about
+0.77 MB - **5.7x fewer lines touched for the same data** - at the cost of one extra
+indirection and 4 bytes per record. Design B is also flat in memory over a long session
+(1.63 MB vs 5.33 MB and growing).
+
+The 24-byte target was partly cosmetic: sparse-and-smaller loses to dense-and-slightly-bigger.
+
+**The true baseline is worse than `sizeof(Order)` suggests.** Measured by intercepting
+`operator new`: a `std::list<Order>` node requests **56 bytes** (40 of `Order` plus two
+8-byte links the container adds invisibly) and the allocator returns a **64-byte** block.
+So the real per-resting-order cost today is 64 bytes, and Design B's 28-byte pooled record
+is a **2.29x** reduction - and today's line holds 2 scattered orders where Design B's holds
+4 dense ones.
 
 **Second open decision:** narrowing `Quantity` to 32 bits caps it near 2.1 billion and is
 what reaches 24 bytes under Design A. Keeping 64-bit quantity adds 4 bytes. 32 bytes still
