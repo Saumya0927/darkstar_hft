@@ -118,8 +118,8 @@ TEST(OrderBook, ModifyIncreaseRestampsSequence) {
   ASSERT_TRUE(b.cancel(OrderId{2}).has_value());
   ASSERT_TRUE(b.cancel(OrderId{3}).has_value());
 
-  const Order* moved = b.front_at(Side::Buy, Price{100});
-  ASSERT_NE(moved, nullptr);
+  const auto moved = b.front_at(Side::Buy, Price{100});
+  ASSERT_TRUE(moved);
   EXPECT_EQ(moved->id.v, 1u);
   EXPECT_EQ(moved->qty.v, 9);
   EXPECT_EQ(moved->seq.v, 10u);
@@ -132,8 +132,8 @@ TEST(OrderBook, ModifyDecreaseKeepsSequenceAndPosition) {
 
   ASSERT_TRUE(b.modify(OrderId{1}, Quantity{2}, Sequence{99}).has_value());
 
-  const Order* front = b.front_at(Side::Buy, Price{100});
-  ASSERT_NE(front, nullptr);
+  const auto front = b.front_at(Side::Buy, Price{100});
+  ASSERT_TRUE(front);
   EXPECT_EQ(front->id.v, 1u);
   EXPECT_EQ(front->qty.v, 2);
   EXPECT_EQ(front->seq.v, 1u);

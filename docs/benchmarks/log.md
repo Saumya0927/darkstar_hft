@@ -42,7 +42,8 @@ resting order.
 | change | commit | ns/event | p99 | p99.9 | verdict |
 |---|---|---|---|---|---|
 | baseline | 1665389 | 79.72 | 291.7 | 375.0 | - |
-| T4 lookup amplification | (this) | 81.33 | 291.7 | 416.7 | KEPT, no perf gain |
+| T4 lookup amplification | 635afaf | 81.33 | 291.7 | 416.7 | KEPT, no perf gain |
+| T5+T6 record layout + object pool | (this) | 68.75 | 250.0 | 333.3 | KEPT, -15.4% and two ticks off p99.9 |
 
 ## T4 - lookup amplification (2026-08-06)
 
@@ -76,3 +77,91 @@ operation is a better boundary to optimise behind once T6 replaces the underlyin
 **Useful signal for what is next.** Since the lookups were not the cost, the remaining time
 is most likely the per-order `malloc`/`free` from `std::list` - which is exactly what the
 object pool in T6 targets.
+
+## T5 + T6 - record layout and object pool (2026-08-07)
+
+Replaced `std::map<Price, std::list<Order>>` with `std::map<Price, Level>` where a `Level`
+is two 32-bit indices, orders live in one `std::vector<Slot>` pool, levels are intrusive
+doubly-linked lists threaded through the slots by index, and freed slots form a free list
+through their own `next` field. Design B (see the M3 spec): the id is stored, slots are
+reused. `index_` still a hash map, now `OrderId -> uint32 slot`.
+
+`Order` 40 bytes in a 64-byte `std::list` node -> `Slot` 28 bytes in a pooled vector.
+Per-order `malloc`/`free` on add/cancel: eliminated.
+
+### Method
+
+Same-session A/B rather than comparison against the logged baseline, because the logged
+baseline predates T4 and its recorded book depth no longer matched. Old and new code built
+from the same tree, same Release preset, alternating measurement blocks. Eight invocations
+of `bench --reps 9` per side; the sample is the per-invocation batch median.
+
+### Throughput
+
+| | n | median ns/event | min | max | within-group spread |
+|---|---|---|---|---|---|
+| before | 8 | 81.25 | 80.04 | 84.11 | 5.0% |
+| after | 8 | 68.75 | 67.10 | 69.87 | 4.0% |
+
+**-15.4%.** Noise floor is 6.08%, so this clears it by a factor of 2.5. The groups are
+completely separated - the slowest new run (69.87) is faster than the fastest old run
+(80.04). Exact Mann-Whitney U = 0, two-tailed **p = 0.000155**.
+
+### Tail
+
+| | p99 | p99.9 | worst |
+|---|---|---|---|
+| before | 291.7 (identical in all runs) | 416.7 (identical in all runs) | 188-204 us |
+| after | 250.0 (identical in all runs) | 333.3 (identical in all runs) | 178-185 us |
+
+p99 improved by exactly one 41.67 ns tick, p99.9 by two. Both were perfectly stable across
+every run on both sides, so these are real quantised steps, not noise.
+
+### What did NOT improve, and it matters
+
+**The worst case is essentially unchanged at roughly 180 us.** The hypothesis was that
+per-order allocation caused the extreme outliers; removing every per-order `malloc` did not
+remove them. Whatever produces a 180 us stall is still there.
+
+Candidates, in order of suspicion:
+
+1. **The pool's own growth.** `alloc_slot` uses `push_back`, so the vector doubles and
+   memcpy's. At peak the largest single reallocation copies roughly 390 KB. This was a
+   deliberate, recorded decision - measure first, then decide - and it is now the obvious
+   next experiment: add `reserve()` and re-measure `max_ns` alone.
+2. **OS preemption.** macOS has no CPU pinning, and the timer read pair itself was
+   previously measured stalling 18 us. Wall clock cannot separate an engine stall from the
+   thread being descheduled. This is exactly why the kperf counters exist, and they need
+   root - still unverified.
+3. Something outside the book entirely (the checksum sink, the sample buffer).
+
+Note the `over_1us` and `over_10us` counts moved around (6-15 and 3-8 on both sides) but
+there are only about ten such events in 350000, so three samples of that population say
+nothing. Not treated as evidence either way.
+
+### Correctness
+
+- 143/143 tests in all three configurations (debug+ASan/UBSan, relassert, release).
+- **The five golden files are byte-identical** - `git status` reports no change under
+  `test/golden/`. The engine's entire textual output over those scripts is unchanged.
+- The benchmark checksum is `dc015ae88f2b6dd0` before and after: the full `OutEvent` stream
+  over 350000 measured events is identical.
+- `NaiveEngine` equivalence holds over the goldens plus 800 random scripts.
+- `leaks --atExit` on non-sanitised release binaries: 0 leaks in `demo` and `bench`.
+
+Before the engine compiled, `link_back`, `unlink`, `alloc_slot` and `free_slot` were
+extracted verbatim into a standalone harness and differential-tested against `std::list`:
+1.6 million operations with nine invariants re-checked after every one, plus a growth-heavy
+run that forced repeated vector reallocation (peak 2442 slots). Six mutations were injected
+to prove the harness could fail; five were caught, and the sixth - dropping a defensive
+`next = kNull` in `link_back` - was not, because every `link_back` in that harness follows a
+fresh `alloc_slot`. Recorded rather than papered over.
+
+`validate()` gained the invariants the pool needs: links in range, `prev` agreeing with the
+forward walk, `tail` genuinely ending the chain, no slot in two chains (which also
+terminates on a cycle), the free list disjoint from live slots, free slots carrying
+`prev == kNull`, and **live + free == pool size** - the accounting check that catches both a
+leaked slot and a double free, neither of which any leak detector can see because the vector
+still owns the memory.
+
+**Verdict: KEPT.** First change in M3 to produce a measurable gain.

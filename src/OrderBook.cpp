@@ -1,6 +1,11 @@
+#include "dhft/Events.h"
 #include "dhft/Types.h"
+#include <cstdint>
 #include <dhft/Check.h>
 #include <dhft/OrderBook.h>
+#include <expected>
+#include <optional>
+#include <utility>
 
 
 namespace dhft {
@@ -10,23 +15,36 @@ namespace dhft {
             return std::unexpected(RejectReason::BadQuantity);
         }
 
-        auto [slot, inserted] = index_.try_emplace(o.id);
-        if (!inserted) {
+        DHFT_CHECK_MSG(std::in_range<std::uint32_t>(o.id.v), "order id does not fit in 32 bits");
+        DHFT_CHECK_MSG(std::in_range<std::int32_t>(o.price.ticks), "price does not fit in 32 bits");
+        DHFT_CHECK_MSG(std::in_range<std::int32_t>(o.qty.v), "quantity does not fit in 32 bits");
+        DHFT_CHECK_MSG(std::in_range<std::uint32_t>(o.seq.v), "sequence does not fit in 32 bits");
+
+        auto [entry, inserted] = index_.try_emplace(o.id, kNull);
+        if (!inserted)
             return std::unexpected(RejectReason::DuplicateOrderId);
-        }
 
         auto place = [&](auto& m) {
-            auto& lvl = m[o.price];
+            std::uint32_t idx = kNull;
             try {
-                lvl.push_back(o);
+                idx = alloc_slot();
+                Level& lvl = m[o.price];
+
+                Slot& s = pool_[idx];
+                s.id = static_cast<std::uint32_t>(o.id.v);
+                s.price = static_cast<std::int32_t>(o.price.ticks);
+                s.qty = static_cast<std::int32_t>(o.qty.v);
+                s.seq = static_cast<std::uint32_t>(o.seq.v);
+                s.side = static_cast<std::uint8_t>(o.side);
+
+                link_back(lvl, idx);
             } catch (...) {
-                if (lvl.empty()) {
-                    m.erase(o.price);
-                }
-                index_.erase(slot);
+                if(idx != kNull)
+                    free_slot(idx);
+                index_.erase(entry);
                 throw;
             }
-            slot->second = Location{o.side, o.price, std::prev(lvl.end())};
+            entry->second = idx;
         };
 
         if (o.side == Side::Buy) {
@@ -65,8 +83,8 @@ namespace dhft {
                 if (count == levels)
                     break;
                 Quantity total{};
-                for (const auto& ord : level)
-                    total = total + ord.qty;
+                for (std::uint32_t i = level.head; i != kNull; i = pool_[i].next)
+                    total = total + Quantity{pool_[i].qty};
                 out.emplace_back(price, total);
                 ++count;
             }
@@ -90,24 +108,32 @@ namespace dhft {
         if (it == index_.end())
             return std::unexpected(RejectReason::UnknownOrder);
 
-        const Location loc = it->second;
+        const std::uint32_t idx = it->second;
+        DHFT_DCHECK(idx < pool_.size());
+
+        const Price price{pool_[idx].price};
+        const Side side = static_cast<Side>(pool_[idx].side);
 
         auto removeFrom = [&](auto& m) {
-            auto lvlIt = m.find(loc.price);
+            auto lvlIt = m.find(price);
             DHFT_CHECK_MSG(lvlIt != m.end(), "index points at a price level that does not exist");
-            lvlIt->second.erase(loc.node);
-            if (lvlIt->second.empty())
+
+            unlink(lvlIt->second, idx);
+            if (lvlIt->second.head == kNull)
                 m.erase(lvlIt);
         };
 
-        if (loc.side == Side::Buy) {
+        if (side == Side::Buy) {
             removeFrom(bids_);
         } else {
             removeFrom(asks_);
         }
 
+        free_slot(idx);
         index_.erase(it);
         return {};
+
+
     }
 
     std::expected<void, RejectReason> OrderBook::modify(OrderId id, Quantity newQty, Sequence newSeq) {
@@ -118,36 +144,42 @@ namespace dhft {
         if (it == index_.end())
             return std::unexpected(RejectReason::UnknownOrder);
 
-        const Location loc = it->second;
+        const std::uint32_t idx = it->second;
+        DHFT_DCHECK(idx < pool_.size());
 
-        if (newQty <= loc.node->qty) {
-            loc.node->qty = newQty;
+        if (newQty <= Quantity{pool_[idx].qty}) {
+            pool_[idx].qty = static_cast<std::int32_t>(newQty.v);
             return {};
         }
 
-        Order updated = *loc.node;
-        updated.qty = newQty;
-        updated.seq = newSeq;
+        const Order updated{id,
+                            static_cast<Side>(pool_[idx].side),
+                            Price{pool_[idx].price},
+                            newQty,
+                            newSeq};
         (void)cancel(id);
         const auto readded = add(updated);
         DHFT_CHECK_MSG(readded.has_value(), "re-adding a just-cancelled order must succeed");
         return {};
     }
 
-    const Order* OrderBook::front_at(Side side, Price price) const noexcept {
-        if (side == Side::Buy) {
-            auto it = bids_.find(price);
-            if (it == bids_.end())
-                return nullptr;
-            DHFT_CHECK_MSG(!it->second.empty(), "a price level must never be empty");
-            return &(it->second.front());
-        } else {
-            auto it = asks_.find(price);
-            if (it == asks_.end())
-                return nullptr;
-            DHFT_CHECK_MSG(!it->second.empty(), "a price level must never be empty");
-            return &(it->second.front());
-        }
+    std::optional<Order> OrderBook::front_at(Side side, Price price) const noexcept {
+        auto lookup = [&](const auto& m) -> std::optional<Order> {
+            auto it = m.find(price);
+            if (it == m.end())
+                return std::nullopt;
+
+            const Level& level = it->second;
+            DHFT_CHECK_MSG(level.head != kNull, "a price level must never be empty");
+
+            const Slot& s = pool_[level.head];
+            return Order{OrderId{s.id},
+                         static_cast<Side>(s.side),
+                         Price{s.price},
+                         Quantity{s.qty},
+                         Sequence{s.seq}};
+        };
+        return (side == Side::Buy) ? lookup(bids_) : lookup(asks_);
     }
 
     Quantity OrderBook::total_quantity(Side side) const noexcept {
@@ -155,8 +187,8 @@ namespace dhft {
 
         auto sum = [&](const auto& m) {
             for (const auto& entry : m) {
-                for (const auto& order : entry.second) {
-                    total = total + order.qty;
+                for (std::uint32_t i = entry.second.head; i != kNull; i = pool_[i].next) {
+                    total = total + Quantity{pool_[i].qty};
                 }
             }
         };
@@ -171,57 +203,69 @@ namespace dhft {
     }
 
     std::expected<void, std::string> OrderBook::validate() const {
+        std::vector<bool> seen(pool_.size(), false);
         std::size_t counted = 0;
-
-        auto check_order = [&](const Order& order, Price levelPrice,
-                               Side side) -> std::expected<void, std::string> {
-            auto who = [&order] { return "order " + std::to_string(order.id.v); };
-
-            if (!order.qty.positive()) {
-                return std::unexpected(who() + " has non-positive quantity");
-            }
-            if (order.price != levelPrice) {
-                return std::unexpected(who() + " price " + std::to_string(order.price.ticks) +
-                                       " does not match its level " +
-                                       std::to_string(levelPrice.ticks));
-            }
-            if (order.side != side) {
-                return std::unexpected(who() + " sits on the wrong side of the book");
-            }
-
-            const auto entry = index_.find(order.id);
-            if (entry == index_.end()) {
-                return std::unexpected(who() + " is missing from the index");
-            }
-
-            const Location& loc = entry->second;
-            if (loc.side != order.side || loc.price != order.price || &(*loc.node) != &order) {
-                return std::unexpected("index entry for " + who() + " is stale");
-            }
-            return {};
-        };
 
         auto check_level = [&](Price price, const Level& level,
                                Side side) -> std::expected<void, std::string> {
-            if (level.empty()) {
-                return std::unexpected("empty level at price " + std::to_string(price.ticks));
+            const std::string at = " at price " + std::to_string(price.ticks);
+
+            if (level.head == kNull || level.tail == kNull) {
+                return std::unexpected("empty level" + at);
             }
 
+            std::uint32_t prevIdx = kNull;
+            Sequence prevSeq{};
             bool first = true;
-            Sequence prev{};
-            for (const auto& order : level) {
+
+            for (std::uint32_t i = level.head; i != kNull; i = pool_[i].next) {
+                if (i >= pool_.size()) {
+                    return std::unexpected("link out of range" + at);
+                }
+                if (seen[i]) {
+                    return std::unexpected("slot " + std::to_string(i) +
+                                           " appears in more than one chain");
+                }
+                seen[i] = true;
                 ++counted;
-                if (auto r = check_order(order, price, side); !r.has_value()) {
-                    return r;
+
+                const Slot& s = pool_[i];
+                const std::string who = "order " + std::to_string(s.id);
+
+                if (s.qty <= 0) {
+                    return std::unexpected(who + " has non-positive quantity");
                 }
-                if (!first && !(prev < order.seq)) {
-                    return std::unexpected("sequence is not ascending at price " +
-                                           std::to_string(price.ticks) + ", order " +
-                                           std::to_string(order.id.v) + " has sequence " +
-                                           std::to_string(order.seq.v));
+                if (Price{s.price} != price) {
+                    return std::unexpected(who + " price " + std::to_string(s.price) +
+                                           " does not match its level" + at);
                 }
-                prev = order.seq;
+                if (static_cast<Side>(s.side) != side) {
+                    return std::unexpected(who + " sits on the wrong side of the book");
+                }
+                if (s.prev != prevIdx) {
+                    return std::unexpected("backward link is broken at " + who);
+                }
+
+                const auto entry = index_.find(OrderId{s.id});
+                if (entry == index_.end()) {
+                    return std::unexpected(who + " is missing from the index");
+                }
+                if (entry->second != i) {
+                    return std::unexpected("index entry for " + who + " is stale");
+                }
+
+                if (!first && !(prevSeq < Sequence{s.seq})) {
+                    return std::unexpected("sequence is not ascending" + at + ", " + who +
+                                           " has sequence " + std::to_string(s.seq));
+                }
+
+                prevSeq = Sequence{s.seq};
+                prevIdx = i;
                 first = false;
+            }
+
+            if (prevIdx != level.tail) {
+                return std::unexpected("tail does not end the chain" + at);
             }
             return {};
         };
@@ -247,38 +291,120 @@ namespace dhft {
                                    " entries but the book holds " + std::to_string(counted) +
                                    " orders");
         }
+
+        std::size_t freeCount = 0;
+        for (std::uint32_t i = freeHead_; i != kNull; i = pool_[i].next) {
+            if (i >= pool_.size()) {
+                return std::unexpected("free-list link out of range");
+            }
+            if (seen[i]) {
+                return std::unexpected("slot " + std::to_string(i) + " is both live and free");
+            }
+            seen[i] = true;
+            if (pool_[i].prev != kNull) {
+                return std::unexpected("free slot " + std::to_string(i) +
+                                       " still carries a prev link");
+            }
+            ++freeCount;
+        }
+
+        if (counted + freeCount != pool_.size()) {
+            return std::unexpected("slot accounting: " + std::to_string(counted) + " live + " +
+                                   std::to_string(freeCount) + " free != " +
+                                   std::to_string(pool_.size()) + " in the pool");
+        }
+
         return {};
     }
 
-    std::optional<Fill> OrderBook::take_from_front(Side side, Price price, Quantity want) {
+
+    std::optional<OrderBook::Fill> OrderBook::take_from_front(Side side, Price price, Quantity want) {
         auto takeFrom = [&](auto& m) -> std::optional<Fill> {
             auto lvlIt = m.find(price);
             if (lvlIt == m.end())
                 return std::nullopt;
 
-            auto& level = lvlIt->second;
-            DHFT_CHECK_MSG(!level.empty(), "a price level must never be empty");
-            Order& front = level.front();
+            Level& level = lvlIt->second;
+            DHFT_CHECK_MSG(level.head != kNull, "a price level must never be empty");
 
-            const Quantity fill = (want <= front.qty) ? want : front.qty;
-            const OrderId id = front.id;
+            const std::uint32_t idx = level.head;
+            DHFT_DCHECK(idx < pool_.size());
+            Slot& slot = pool_[idx];
+
+            const Quantity restingQty{slot.qty};
+            const OrderId id{slot.id};
+            const Quantity fill = (want <= restingQty) ? want : restingQty;
 
             bool emptied = false;
-            if (fill == front.qty) {
+            if (fill == restingQty) {
+                unlink(level, idx);
+                free_slot(idx);
                 index_.erase(id);
-                level.pop_front();
-                if (level.empty()) {
+                if (level.head == kNull) {
                     m.erase(lvlIt);
                     emptied = true;
                 }
             } else {
-                front.qty = front.qty - fill;
+                slot.qty = static_cast<std::int32_t>((restingQty - fill).v);
             }
-
             return Fill{id, fill, emptied};
         };
-
         return (side == Side::Buy) ? takeFrom(bids_) : takeFrom(asks_);
+    }
+
+    void OrderBook::free_slot(std::uint32_t idx) noexcept {
+        pool_[idx].next = freeHead_;
+        freeHead_ = idx;
+    }
+
+    std::uint32_t OrderBook::alloc_slot() {
+        if (freeHead_ != kNull) {
+            const std::uint32_t idx = freeHead_;
+            freeHead_ = pool_[idx].next;
+            pool_[idx] = Slot{};
+            return idx;
+        }
+
+        DHFT_CHECK_MSG(pool_.size() < kNull, "order pool exhausted");
+        pool_.push_back(Slot{});
+        return static_cast<std::uint32_t>(pool_.size() - 1);
+    }
+
+    void OrderBook::link_back(Level& level, std::uint32_t idx) noexcept {
+        DHFT_DCHECK(idx < pool_.size());
+
+        pool_[idx].next = kNull;
+        pool_[idx].prev = level.tail;
+
+        if (level.tail == kNull) {
+            level.head = idx;
+        } else {
+            pool_[level.tail].next = idx;
+        }
+
+        level.tail = idx;
+    }
+
+    void OrderBook::unlink(Level& level, std::uint32_t idx) noexcept {
+        DHFT_DCHECK(idx < pool_.size());
+
+        const std::uint32_t p = pool_[idx].prev;
+        const std::uint32_t n = pool_[idx].next;
+
+        if (p != kNull) {
+            pool_[p].next = n;
+        } else {
+            level.head = n;
+        }
+
+        if (n != kNull) {
+            pool_[n].prev = p;
+        } else {
+            level.tail = p;
+        }
+
+        pool_[idx].next = kNull;
+        pool_[idx].prev = kNull;
     }
 
 }
