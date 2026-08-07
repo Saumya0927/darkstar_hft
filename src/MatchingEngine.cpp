@@ -1,3 +1,4 @@
+#include "dhft/Events.h"
 #include <dhft/Check.h>
 #include <dhft/MatchingEngine.h>
 
@@ -56,24 +57,13 @@ namespace dhft {
             bool crosses = (o.side == Side::Buy) ? (*best <= o.price) : (*best >= o.price);
             if (!crosses) break;
 
-            const Order* resting = book_.front_at(opposite, *best);
-            if (!resting) break;
+            const auto fill = book_.take_from_front(opposite, *best, o.qty);
 
-            Quantity fill = (o.qty <= resting->qty) ? o.qty : resting->qty;
+            if (!fill) break;
 
-            const OrderId restingId = resting->id;
-            const Quantity restingQty = resting->qty;
-            const Sequence restingSeq = resting->seq;
+            sink_.on_event(OutEvent::trade(o.id, fill->restingId, *best, fill->filled));
 
-            sink_.on_event(OutEvent::trade(o.id, restingId, *best, fill));
-
-            o.qty = o.qty - fill;
-
-            if (fill == restingQty) {
-                (void)book_.cancel(restingId);
-            } else {
-                (void)book_.modify(restingId, restingQty - fill, restingSeq);
-            }
+            o.qty = o.qty - fill->filled;
         }
 
         if (o.qty.positive()) {

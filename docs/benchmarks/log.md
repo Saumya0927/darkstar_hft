@@ -42,3 +42,37 @@ resting order.
 | change | commit | ns/event | p99 | p99.9 | verdict |
 |---|---|---|---|---|---|
 | baseline | 1665389 | 79.72 | 291.7 | 375.0 | - |
+| T4 lookup amplification | (this) | 81.33 | 291.7 | 416.7 | KEPT, no perf gain |
+
+## T4 - lookup amplification (2026-08-06)
+
+Replaced the match loop's `front_at` + `cancel`/`modify` sequence with a single
+`OrderBook::take_from_front(side, price, want)`. Per fill this removes one tree walk and
+one hash lookup for a node the matcher already held a pointer to.
+
+**Result: no measurable improvement at any book size or workload.**
+
+| workload | levels | before ns/event | after ns/event |
+|---|---|---|---|
+| default (band 9900-10100) | 103 | 79.72 | 81.33 |
+| crossing-heavy (9990-10010) | ~20 | 73.38 | 73.49 |
+| wide book (9000-11000) | 958 | 89.22 | 89.60 |
+
+All differences are far inside the 6% noise floor. Checksums identical in every pairing,
+so behaviour is unchanged; 143 tests and 800 equivalence scripts pass.
+
+**Why the hypothesis failed.** The prediction was that a tree walk is ~7 pointer hops,
+each a potential ~100 ns cache miss. But at these sizes the price tree is cache-resident:
+103 map nodes is roughly 7 KB and 958 is roughly 61 KB, at or under L1. The pointers being
+chased were already in L1 (~1 ns) and the CPU overlaps them with surrounding work. The
+pattern (pointer chasing) was costed without checking the precondition (working set larger
+than cache). Same failure mode as the earlier hash-mixing episode: a sound general
+principle applied where its precondition did not hold.
+
+**Verdict: kept, explicitly not on performance grounds.** It is strictly less work so it
+cannot be slower; the match loop went from 17 lines to 4; and a single "take from front"
+operation is a better boundary to optimise behind once T6 replaces the underlying storage.
+
+**Useful signal for what is next.** Since the lookups were not the cost, the remaining time
+is most likely the per-order `malloc`/`free` from `std::list` - which is exactly what the
+object pool in T6 targets.

@@ -17,6 +17,12 @@
 
 namespace dhft {
 
+    struct Fill {
+        OrderId restingId;
+        Quantity filled;
+        bool levelEmptied;
+    };
+
     class OrderBook {
     public:
         [[nodiscard]] std::expected<void, RejectReason> add(const Order& o);
@@ -30,6 +36,7 @@ namespace dhft {
         [[nodiscard]] std::expected<void, RejectReason> cancel(OrderId id);
         [[nodiscard]] std::expected<void, RejectReason> modify(OrderId id, Quantity newQty, Sequence newSeq);
         [[nodiscard]] const Order* front_at(Side side, Price price) const noexcept;
+        [[nodiscard]] std::optional<Fill> take_from_front(Side side, Price price, Quantity want);
         [[nodiscard]] Quantity total_quantity(Side side) const noexcept;
         [[nodiscard]] std::expected<void, std::string> validate() const;
 

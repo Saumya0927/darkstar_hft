@@ -1,3 +1,4 @@
+#include "dhft/Types.h"
 #include <dhft/Check.h>
 #include <dhft/OrderBook.h>
 
@@ -248,4 +249,36 @@ namespace dhft {
         }
         return {};
     }
+
+    std::optional<Fill> OrderBook::take_from_front(Side side, Price price, Quantity want) {
+        auto takeFrom = [&](auto& m) -> std::optional<Fill> {
+            auto lvlIt = m.find(price);
+            if (lvlIt == m.end())
+                return std::nullopt;
+
+            auto& level = lvlIt->second;
+            DHFT_CHECK_MSG(!level.empty(), "a price level must never be empty");
+            Order& front = level.front();
+
+            const Quantity fill = (want <= front.qty) ? want : front.qty;
+            const OrderId id = front.id;
+
+            bool emptied = false;
+            if (fill == front.qty) {
+                index_.erase(id);
+                level.pop_front();
+                if (level.empty()) {
+                    m.erase(lvlIt);
+                    emptied = true;
+                }
+            } else {
+                front.qty = front.qty - fill;
+            }
+
+            return Fill{id, fill, emptied};
+        };
+
+        return (side == Side::Buy) ? takeFrom(bids_) : takeFrom(asks_);
+    }
+
 }
