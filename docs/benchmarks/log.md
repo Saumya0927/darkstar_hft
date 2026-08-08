@@ -318,11 +318,49 @@ half the story.
 - `hash_is_avalanching_v` asserted at compile time, so a wrong marker fails the build
   rather than silently degrading the distribution.
 
+### Under sudo, with counters: the tail is gone
+
+```
+ns/event   41.86 (spread 2.0%)
+p99        125.0     p99.9  208.3
+worst      4875 ns   over 1us: 1   over 10us: 0
+
+cycles/event          136.07
+instructions/event    360.96
+IPC                     2.65
+branch misses/event    2.9719
+implied clock           3.20 GHz
+```
+
+| | before T8 | after T8 |
+|---|---|---|
+| worst case | ~181000 ns | **4875 ns** |
+| events >1us (of 350000) | 13 | **1** |
+| events >10us | 5 | **0** |
+| implied clock | 3.09 GHz | **3.20 GHz** |
+| cycles/event | 219.14 | **136.07** |
+| instructions/event | 508.66 | **360.96** |
+| IPC | 2.32 | **2.65** |
+| branch misses/event | 4.1850 | **2.9719** |
+
+**Implied clock at 3.20 GHz - the P-core maximum - means the thread held the core for
+essentially all of the wall time.** No descheduling at all. That also retrospectively
+explains the old 3.09: rehashing allocated large fresh blocks, and first-touching new pages
+is kernel time during which the thread is not running. The stall was never purely compute.
+
+**The two instruments agree exactly.** Cycles/event fell 37.9% and wall-clock ns/event fell
+37.9%. Independent measurements landing on the same figure is evidence the measurement
+apparatus itself is sound.
+
 ### Still open
 
-- **The worst case is 21 us, not gone.** Down from 181 us, but something still stalls.
-  Unexplained.
-- **Branch misses were 4.19/event before this change**, roughly 27% of the cycle budget.
-  Needs re-measuring under `sudo` now that the map is gone; it is the likely next target.
+- **Branch misses are now the largest identified cost.** 2.97/event at roughly 14 cycles
+  each is about 42 of the 136 cycles per event - **31% of the budget**, up from 27% as a
+  share even though the absolute count fell 29%. This was never on the original hypothesis
+  list; the counters found it.
+- **361 instructions per event** is still a lot for "find a level, walk a chain, adjust a
+  quantity."
+- The worst case is 4875 ns rather than zero. One event in 350000 exceeds 1 us. Not yet
+  explained, but no longer worth chasing ahead of the branch work.
 - The split between "avoided rehashing" and "better heap layout" in the original reserve
   experiment was never isolated, and still has not been.
