@@ -1,5 +1,6 @@
 #pragma once
 
+#include <concepts>
 #include <cstdint>
 #include <dhft/Events.h>
 #include <dhft/Types.h>
@@ -15,6 +16,18 @@
 #include <utility>
 
 namespace dhft {
+
+namespace detail {
+
+template <typename M>
+concept PriceLevelMap =
+    std::same_as<typename M::key_type, Price> &&
+    requires(typename M::mapped_type& lvl) {
+        { lvl.head } -> std::convertible_to<std::uint32_t>;
+        { lvl.tail } -> std::convertible_to<std::uint32_t>;
+    };
+
+}
 
     class OrderBook {
     public:

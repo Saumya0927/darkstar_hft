@@ -23,7 +23,7 @@ namespace dhft {
         if (!inserted)
             return std::unexpected(RejectReason::DuplicateOrderId);
 
-        auto place = [&](auto& m) {
+        auto place = [&](detail::PriceLevelMap auto& m) {
             std::uint32_t idx = kNull;
             try {
                 idx = alloc_slot();
@@ -76,7 +76,7 @@ namespace dhft {
                                std::vector<std::pair<Price, Quantity>>& out) const {
         out.clear();
 
-        auto walk = [&](const auto& m) {
+        auto walk = [&](const detail::PriceLevelMap auto& m) {
             std::size_t count = 0;
             for (const auto& [price, level] : m) {
                 if (count == levels)
@@ -113,7 +113,7 @@ namespace dhft {
         const Price price{pool_[idx].price};
         const Side side = static_cast<Side>(pool_[idx].side);
 
-        auto removeFrom = [&](auto& m) {
+        auto removeFrom = [&](detail::PriceLevelMap auto& m) {
             auto lvlIt = m.find(price);
             DHFT_CHECK_MSG(lvlIt != m.end(), "index points at a price level that does not exist");
 
@@ -162,7 +162,7 @@ namespace dhft {
     }
 
     std::optional<Order> OrderBook::front_at(Side side, Price price) const noexcept {
-        auto lookup = [&](const auto& m) -> std::optional<Order> {
+        auto lookup = [&](const detail::PriceLevelMap auto& m) -> std::optional<Order> {
             auto it = m.find(price);
             if (it == m.end())
                 return std::nullopt;
@@ -183,7 +183,7 @@ namespace dhft {
     Quantity OrderBook::total_quantity(Side side) const noexcept {
         Quantity total{};
 
-        auto sum = [&](const auto& m) {
+        auto sum = [&](const detail::PriceLevelMap auto& m) {
             for (const auto& entry : m) {
                 for (std::uint32_t i = entry.second.head; i != kNull; i = pool_[i].next) {
                     total = total + Quantity{pool_[i].qty};
@@ -237,6 +237,10 @@ namespace dhft {
                     return std::unexpected(who() + " price " + std::to_string(s.price) +
                                            " does not match its level" + at());
                 }
+                if (s.side > static_cast<std::uint8_t>(Side::Sell)) {
+                    return std::unexpected(who() + " has an invalid side byte " +
+                                           std::to_string(s.side));
+                }
                 if (static_cast<Side>(s.side) != side) {
                     return std::unexpected(who() + " sits on the wrong side of the book");
                 }
@@ -268,7 +272,7 @@ namespace dhft {
             return {};
         };
 
-        auto check_side = [&](const auto& m, Side side) -> std::expected<void, std::string> {
+        auto check_side = [&](const detail::PriceLevelMap auto& m, Side side) -> std::expected<void, std::string> {
             for (const auto& [price, level] : m) {
                 if (auto r = check_level(price, level, side); !r.has_value()) {
                     return r;
@@ -316,7 +320,7 @@ namespace dhft {
     }
 
     std::optional<OrderBook::Fill> OrderBook::take_from_front(Side side, Price price, Quantity want) noexcept {
-        auto takeFrom = [&](auto& m) -> std::optional<Fill> {
+        auto takeFrom = [&](detail::PriceLevelMap auto& m) -> std::optional<Fill> {
             auto lvlIt = m.find(price);
             if (lvlIt == m.end())
                 return std::nullopt;
