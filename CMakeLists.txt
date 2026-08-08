@@ -43,13 +43,22 @@ target_compile_options(dhft_options INTERFACE
 target_link_options(dhft_options INTERFACE
   $<$<CONFIG:Debug>:-fsanitize=address,undefined>)
 
+# Open-addressed hash map for the order-id index. Pinned, not tracking main.
+include(FetchContent)
+FetchContent_Declare(
+  unordered_dense
+  GIT_REPOSITORY https://github.com/martinus/unordered_dense.git
+  GIT_TAG        v4.9.0
+)
+FetchContent_MakeAvailable(unordered_dense)
+
 # The core engine library: order book + matching engine. No file or stream I/O.
 add_library(dhft STATIC
   src/OrderBook.cpp
   src/MatchingEngine.cpp
 )
 target_include_directories(dhft PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_link_libraries(dhft PUBLIC dhft_options)
+target_link_libraries(dhft PUBLIC dhft_options unordered_dense::unordered_dense)
 
 # Text I/O module (script parsing, human-readable output), built on the core engine.
 add_subdirectory(io)
@@ -62,7 +71,6 @@ add_subdirectory(testkit)
 add_subdirectory(bench)
 
 # GoogleTest, fetched at configure time (no manual checkout).
-include(FetchContent)
 FetchContent_Declare(
   googletest
   GIT_REPOSITORY https://github.com/google/googletest.git

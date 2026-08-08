@@ -43,7 +43,8 @@ resting order.
 |---|---|---|---|---|---|
 | baseline | 1665389 | 79.72 | 291.7 | 375.0 | - |
 | T4 lookup amplification | 635afaf | 81.33 | 291.7 | 416.7 | KEPT, no perf gain |
-| T5+T6 record layout + object pool | (this) | 68.75 | 250.0 | 333.3 | KEPT, -15.4% and two ticks off p99.9 |
+| T5+T6 record layout + object pool | 0a91b60 | 68.75 | 250.0 | 333.3 | KEPT, -15.4% and two ticks off p99.9 |
+| T8 open-addressed id map + capacity | (this) | 42.70 | 125.0 | 208.3 | KEPT, -37.9% and worst case -88% |
 
 ## T4 - lookup amplification (2026-08-06)
 
@@ -247,3 +248,81 @@ up front for a book peaking at 27600 orders, and it does not scale. T8's flat ve
 by `id - base` removes the rehash, the hash, and the redundant `contains`-then-`try_emplace`
 lookup in `MatchingEngine`. T8 now measures against the 68.7 ns baseline and should claim
 the whole win.
+
+## T8 - open-addressed id map with a declared capacity (2026-08-08)
+
+Replaced `std::unordered_map<OrderId, std::uint32_t>` with
+`ankerl::unordered_dense::map` (v4.9.0, pinned, MIT, via FetchContent), added a hash
+specialisation routed through the library's public integral hash, and gave `OrderBook` an
+`explicit OrderBook(std::size_t expectedOrders = 65536)` that reserves both `index_` and
+`pool_`.
+
+Spec: `docs/superpowers/specs/2026-08-08-id-map-design.md`.
+
+### Result
+
+Eight invocations per side, same tree, Release, alternating.
+
+| metric | baseline | T8 | change | test |
+|---|---|---|---|---|
+| ns/event | 68.7 | **42.7** | **-37.9%** | U=0, p=0.000155, complete separation |
+| worst case | 180875 | **21333** | **-88.2%** | U=0, p=0.000155, complete separation |
+| p99 | 250.0 | **125.0** | -3 ticks | stable across runs |
+| p99.9 | 333.3 | **208.3** | -3 ticks | stable across runs |
+| events >1us | 13 | 4.5 | -65% | p=0.001088 |
+| events >10us | 5 | 1.5 | -70% | p=0.014763 |
+
+**Within-group spread fell from 4.3% to 0.6%** - a seven-fold improvement in run-to-run
+consistency. For a latency-sensitive system that is a result in its own right, not a
+footnote: the engine is now predictable as well as faster.
+
+### Attribution, measured in two steps
+
+The change was applied in two commits so each half could be measured separately.
+
+| step | ns/event | worst case |
+|---|---|---|
+| baseline | 68.7 | 180875 |
+| swap the map only, no reserve | 55.2 | ~121000 |
+| + declared capacity | **42.7** | **21333** |
+
+Swapping the container bought -19.6%; reserving bought another -22.6%. Neither alone gets
+close to the pair. Worth recording because the earlier `index_.reserve()` experiment on
+`std::unordered_map` gave -19.5% - so a better container and a capacity are roughly equal
+contributors here, and the naive conclusion "it was just the rehashing" would have been
+half the story.
+
+### Cumulative, milestone to date
+
+| | ns/event | p99 | p99.9 | worst |
+|---|---|---|---|---|
+| M3 baseline (1665389) | 79.7 | 291.7 | 375.0 | ~115000 |
+| after T8 | **42.7** | **125.0** | **208.3** | **21333** |
+| improvement | **-46%** | -4 ticks | -4 ticks | **-81%** |
+
+### Correctness
+
+- 143/143 in all three build configurations.
+- **The five golden files are byte-identical**; `git status` reports nothing under
+  `test/golden/`.
+- Benchmark checksum `dc015ae88f2b6dd0`, unchanged since the M3 baseline.
+- `NaiveEngine` equivalence holds over the goldens plus 800 random scripts.
+- `leaks --atExit` on non-sanitised release binaries: 0 leaks in `demo` and `bench`.
+
+### What was verified before writing any code
+
+- All 17 `index_` call patterns compiled and run against the new map with the real
+  `OrderId` type, including const `find` (`validate()` is const) and `size()` as a live
+  count across a 500000-wide id gap.
+- CMake `FetchContent` integration built end to end in a scratch project.
+- `hash_is_avalanching_v` asserted at compile time, so a wrong marker fails the build
+  rather than silently degrading the distribution.
+
+### Still open
+
+- **The worst case is 21 us, not gone.** Down from 181 us, but something still stalls.
+  Unexplained.
+- **Branch misses were 4.19/event before this change**, roughly 27% of the cycle budget.
+  Needs re-measuring under `sudo` now that the map is gone; it is the likely next target.
+- The split between "avoided rehashing" and "better heap layout" in the original reserve
+  experiment was never isolated, and still has not been.

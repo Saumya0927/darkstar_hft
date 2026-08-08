@@ -1,10 +1,10 @@
 #pragma once
 
-#include <concepts>
-#include <cstdint>
 #include <dhft/Events.h>
 #include <dhft/Types.h>
 
+#include <concepts>
+#include <cstdint>
 #include <expected>
 #include <functional>
 #include <map>
@@ -12,8 +12,20 @@
 #include <optional>
 #include <string>
 #include <vector>
-#include <unordered_map>
 #include <utility>
+
+#include <ankerl/unordered_dense.h>
+
+template <>
+struct ankerl::unordered_dense::hash<dhft::OrderId> {
+    using is_avalanching = void;
+    [[nodiscard]] auto operator()(const dhft::OrderId& id) const noexcept -> std::uint64_t {
+        return ankerl::unordered_dense::hash<std::uint64_t>{}(id.v);
+    }
+};
+
+static_assert(ankerl::unordered_dense::hash_is_avalanching_v<
+                    ankerl::unordered_dense::hash<dhft::OrderId>>);
 
 namespace dhft {
 
@@ -31,6 +43,7 @@ concept PriceLevelMap =
 
     class OrderBook {
     public:
+        explicit OrderBook(std::size_t expectedOrders = 65536);
 
         struct Fill {
             OrderId restingId{};
@@ -76,7 +89,7 @@ concept PriceLevelMap =
         std::uint32_t freeHead_{kNull};
         std::map<Price, Level, std::greater<>> bids_;
         std::map<Price, Level> asks_;
-        std::unordered_map<OrderId, std::uint32_t> index_;
+        ankerl::unordered_dense::map<OrderId, std::uint32_t> index_;
 
         [[nodiscard]] std::uint32_t alloc_slot();
         void free_slot(std::uint32_t idx) noexcept;

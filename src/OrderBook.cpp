@@ -9,6 +9,11 @@
 
 namespace dhft {
 
+    OrderBook::OrderBook(std::size_t expectedOrders) {
+        index_.reserve(expectedOrders);
+        pool_.reserve(expectedOrders);
+    }
+
     std::expected<void, RejectReason> OrderBook::add(const Order& o) {
         if (!o.qty.positive()) {
             return std::unexpected(RejectReason::BadQuantity);
