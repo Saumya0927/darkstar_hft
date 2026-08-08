@@ -95,10 +95,31 @@ Verified against the repository, not the README.
   rather than vendoring a single file.
 - **C++17 minimum.** This project is C++26, so no constraint.
 - **MIT licence.**
-- **CMake:** `FetchContent`, following the pattern already used for GoogleTest, then link
-  `unordered_dense::unordered_dense`.
+- **CMake:** `FetchContent`, following the pattern already used for GoogleTest. Verified
+  end to end in a scratch project against `v4.9.0`:
+
+  ```cmake
+  FetchContent_Declare(unordered_dense
+    GIT_REPOSITORY https://github.com/martinus/unordered_dense.git
+    GIT_TAG        v4.9.0
+  )
+  FetchContent_MakeAvailable(unordered_dense)
+  target_link_libraries(dhft PUBLIC unordered_dense::unordered_dense)
+  ```
+
+  Include as `<ankerl/unordered_dense.h>`. `FetchContent` supplies both `unordered_dense.h`
+  and its companion `stl.h`, so the not-header-only issue does not arise through CMake -
+  only if the header were vendored by hand.
 - **API is `std::unordered_map`-compatible** for everything `OrderBook` uses:
   `try_emplace`, `find`, `erase`, `contains`, `size`, `reserve`, `end`.
+
+**Verified, not assumed.** All 17 call patterns `OrderBook` uses were compiled and run
+against `ankerl::unordered_dense` with the real `dhft::OrderId` type: `try_emplace` with a
+structured binding and sentinel value, duplicate detection returning `inserted == false`
+without overwriting, writing through the returned iterator, `contains` both ways, `find`
+compared against `end()`, **const `find`** (`validate()` is const), `erase` by iterator and
+by key, erase of an absent key as a no-op, id reuse after erase, and `size()` returning the
+**live count** even across a 500,000-wide id gap. Zero failures.
 
 ### The custom hash
 
@@ -109,10 +130,25 @@ specialised, not `std::hash`:
 template <> struct ankerl::unordered_dense::hash<dhft::OrderId> {
     using is_avalanching = void;
     [[nodiscard]] auto operator()(const dhft::OrderId& id) const noexcept -> std::uint64_t {
-        return ankerl::unordered_dense::detail::wyhash::hash(id.v);
+        return ankerl::unordered_dense::hash<std::uint64_t>{}(id.v);
     }
 };
 ```
+
+**Route through the library's public integral hash, not `detail::wyhash`.** An earlier draft
+of this spec called `ankerl::unordered_dense::detail::wyhash::hash` directly. `detail` is
+explicitly internal and can change between releases. The public
+`ankerl::unordered_dense::hash<std::uint64_t>` is the wyhash-backed, avalanching
+specialisation the library installs for integral types, so it gives the identical hash
+through a supported interface.
+
+Verified: `hash_is_avalanching_v<ankerl::unordered_dense::hash<dhft::OrderId>>` is `true`
+with the above, checked by `static_assert`.
+
+Note also that if `std::hash<T>` itself declares an `is_avalanching` marker, the library
+detects it and routes through it. That is **not** the case here - libc++'s
+`std::hash<std::uint64_t>` is the identity function and declares nothing - so the
+specialisation above is required, not optional.
 
 `is_avalanching` tells the library the hash is already high quality so it skips its own
 extra mixing. Marking it wrongly costs correctness of distribution, not compilation - so it
@@ -145,7 +181,7 @@ requiring `NaiveEngine` to adopt the identical rule.
 ```
 CMakeLists.txt            FetchContent for unordered_dense, link into dhft
 include/dhft/OrderBook.h  index_ type; capacity parameter; the hash specialisation
-src/OrderBook.cpp         14 use sites across add / contains / cancel / modify /
+src/OrderBook.cpp         13 use sites across add / contains / cancel / modify /
                           take_from_front / validate - mechanical, the API is compatible
 test/                     0 changes
 NaiveEngine               0 changes
@@ -177,10 +213,18 @@ path, and insert the final value without reusing a stale handle.
 1. **A new third-party dependency** in the core engine, which until now had none. Mitigated
    by: MIT, pinned tag, `FetchContent` (no vendored code), and a documented fallback to
    hand-rolling.
-2. **Beyond cache at real scale.** 27,600 orders is ~0.8 MB and fits in the 12 MB L2. One
-   million orders is ~24 MB and does not. At production volumes every lookup becomes a
-   memory access and no map design changes that. This bounds what T8 can achieve on live
-   data.
+2. **Beyond cache at real scale.** Measured, with `reserve(2n)`:
+
+   | live entries | footprint | bytes/entry | fits in the 12 MB L2? |
+   |---|---|---|---|
+   | 27,600 | **1.84 MB** | 70.0 | yes |
+   | 1,000,000 | **62.5 MB** | 65.6 | no |
+
+   An earlier draft of this spec estimated 0.8 MB and 24 MB from arithmetic. Both were low
+   by roughly 2.5x, because the dense value array pads `pair<uint64,uint32>` to 16 bytes and
+   the bucket array carries an index plus a fingerprint. At production volumes every lookup
+   becomes a memory access, and no map design changes that. This bounds what T8 can achieve
+   on live data.
 3. **The gain may be smaller in the engine than in the probe.** The probe isolates the map;
    the engine does other work per event. Expect **at least** the reserve result (-19.5%).
 4. **The map may stop being the bottleneck.** Counters put branch misses at 4.19/event,
