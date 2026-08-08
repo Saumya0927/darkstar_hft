@@ -24,14 +24,15 @@ namespace dhft {
         DHFT_CHECK_MSG(std::in_range<std::int32_t>(o.qty.v), "quantity does not fit in 32 bits");
         DHFT_CHECK_MSG(std::in_range<std::uint32_t>(o.seq.v), "sequence does not fit in 32 bits");
 
-        auto [entry, inserted] = index_.try_emplace(o.id, kNull);
-        if (!inserted)
-            return std::unexpected(RejectReason::DuplicateOrderId);
+        const std::uint32_t idx = alloc_slot();
 
-        auto place = [&](detail::PriceLevelMap auto& m) {
-            std::uint32_t idx = kNull;
+        auto place = [&](detail::PriceLevelMap auto& m) -> std::expected<void, RejectReason> {
             try {
-                idx = alloc_slot();
+                if (!index_.try_emplace(o.id, idx).second) {
+                    free_slot(idx);
+                    return std::unexpected(RejectReason::DuplicateOrderId);
+                }
+
                 Level& lvl = m[o.price];
 
                 Slot& s = pool_[idx];
@@ -43,20 +44,13 @@ namespace dhft {
 
                 link_back(lvl, idx);
             } catch (...) {
-                if(idx != kNull)
-                    free_slot(idx);
-                index_.erase(entry);
+                index_.erase(o.id);
+                free_slot(idx);
                 throw;
             }
-            entry->second = idx;
+            return {};
         };
-
-        if (o.side == Side::Buy) {
-            place(bids_);
-        } else {
-            place(asks_);
-        }
-        return {};
+        return (o.side == Side::Buy) ? place(bids_) : place(asks_);
     }
 
     bool OrderBook::contains(OrderId id) const noexcept {
