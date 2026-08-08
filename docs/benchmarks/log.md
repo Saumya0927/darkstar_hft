@@ -165,3 +165,85 @@ leaked slot and a double free, neither of which any leak detector can see becaus
 still owns the memory.
 
 **Verdict: KEPT.** First change in M3 to produce a measurable gain.
+
+## Diagnosis: the ~180 us worst case is the id map rehashing (2026-08-07)
+
+Not shipped as a change - this entry records the experiments that located the cause,
+which is what T8 will fix properly.
+
+### Counters, finally verified
+
+The kperf path had never been executed by anyone. It works. First run also exposed a bug
+in the harness: `counters.begin()/end()` wrapped the whole `run_batch` call, so every
+per-event figure divided cycles for 400000 events plus two full-book depth scans by the
+350000-event measured window. Fixed; all four numbers were inflated by about 13%.
+
+Corrected, on the standard script:
+
+```
+cycles/event          219.14
+instructions/event    508.66
+IPC                     2.32
+branch misses/event    4.1850
+implied clock           3.09 GHz   (M1 P-core maximum 3.20)
+```
+
+**Implied clock is the load-bearing number.** Cycles accrue only while the thread runs;
+wall clock also counts time it does not. 3.09 of a possible 3.20 means the thread held the
+core about 97% of the time, so there is not enough non-running time for OS preemption to
+explain a 180 us event. That killed the second hypothesis.
+
+**Branch misses at 4.19/event** cost roughly 59 cycles at ~14 cycles each - about 27% of the
+219-cycle budget. This was not on the hypothesis list and is now the largest identified
+cost after the map. IPC 2.32 on a core that retires 8/cycle is consistent with a
+branch-bound rather than memory-bound workload.
+
+### Hypothesis 1: the pool's own vector growth. FALSIFIED.
+
+`pool_.reserve(65536)` so no reallocation can occur during the run.
+
+| | median max_ns |
+|---|---|
+| baseline | 181083 |
+| pool reserved | 185500 |
+
+Slightly worse, distributions fully overlapping. Copying ~390 KB is not what costs 180 us.
+
+### Hypothesis 2: `std::unordered_map` rehashing. CONFIRMED.
+
+`index_.reserve(65536)` only, pool left alone. Eight invocations per side.
+
+| metric | baseline | index reserved | change | test |
+|---|---|---|---|---|
+| ns/event | 68.7 | 55.3 | **-19.5%** | U=0, p=0.000155, complete separation |
+| worst case | 180875 | 17625 | **-90.3%** | U=0, p=0.000155, complete separation |
+| p99 | 250.0 | 208.3 | -1 tick | stable in every run on both sides |
+| p99.9 | 333.3 | 291.7 | -1 tick | stable in every run on both sides |
+| events >10us | 5 | 2.5 | -50% | p=0.0148 |
+
+The index grows to about 27600 entries, so it rehashes roughly 14 times, each time
+reallocating the bucket array and re-hashing every element. That is deterministic, which is
+exactly why the worst case reproduced at 178-184 us on 8 of 10 baseline runs. The
+consistency was the clue; it was initially attributed to the wrong structure.
+
+**Honest limit on the explanation.** Avoided rehash work is about 56000 element-rehashes
+over the run, which accounts for perhaps 7 of the 19.5 percentage points. The remainder is
+most likely heap layout - without `reserve` the bucket arrays are repeatedly allocated and
+freed interleaved with node allocations, scattering the nodes and degrading every lookup.
+That split has not been isolated. Doing so needs an L1D-miss counter; the `Counters` alias
+table currently resolves only cycles, instructions, branches and branch-misses.
+
+### Why this matters for the story so far
+
+- T4 predicted a lookup win and delivered zero.
+- T5+T6 predicted a tail win, delivered a 15.4% throughput win, and left the worst case
+  untouched. The log recorded that as unexplained. This is the explanation: the stall was
+  never in the order records, it was in the id index.
+- Removing every per-order `malloc` did not touch the tail because the tail was one
+  container away.
+
+**Not shipping `reserve`.** 65536 is a magic number, it commits about 512 KB of bucket array
+up front for a book peaking at 27600 orders, and it does not scale. T8's flat vector indexed
+by `id - base` removes the rehash, the hash, and the redundant `contains`-then-`try_emplace`
+lookup in `MatchingEngine`. T8 now measures against the 68.7 ns baseline and should claim
+the whole win.
