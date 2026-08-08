@@ -36,7 +36,8 @@ void ChecksumSink::on_event(const OutEvent& e) noexcept {
     mix(static_cast<std::uint64_t>(e.reason));
 }
 
-BatchResult run_batch(const std::vector<InEvent>& script, std::size_t warmup) {
+BatchResult run_batch(const std::vector<InEvent>& script, std::size_t warmup,
+                      Counters* counters) {
     ChecksumSink sink;
     MatchingEngine engine{sink};
 
@@ -47,13 +48,18 @@ BatchResult run_batch(const std::vector<InEvent>& script, std::size_t warmup) {
 
     const BookDepth entering = measure_depth(engine.book());
 
+    if (counters != nullptr) {
+        counters->begin();
+    }
     const std::uint64_t t0 = now_ticks();
     for (std::size_t i = start; i < script.size(); ++i) {
         engine.process(script[i]);
     }
     const std::uint64_t t1 = now_ticks();
+    const CounterSample sample = (counters != nullptr) ? counters->end() : CounterSample{};
 
     BatchResult r;
+    r.counters = sample;
     r.atStart = entering;
     r.events = script.size() - start;
     r.totalNs = Samples::ticks_to_ns(static_cast<double>(t1 - t0));

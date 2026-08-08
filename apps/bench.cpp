@@ -113,10 +113,11 @@ int main(int argc, char** argv) {
 
     dhft::bench::Counters counters;
     dhft::bench::CounterSample counted;
+    double countedNs = 0.0;
     if (counters.available()) {
-        counters.begin();
-        const auto counting = dhft::bench::run_batch(script, opt.warmup);
-        counted = counters.end();
+        const auto counting = dhft::bench::run_batch(script, opt.warmup, &counters);
+        counted = counting.counters;
+        countedNs = counting.totalNs;
         if (counting.checksum != checksum) {
             checksumStable = false;
         }
@@ -154,8 +155,10 @@ int main(int argc, char** argv) {
             std::printf(",\n  \"cycles_per_event\": %.2f,\n", static_cast<double>(counted.cycles) / ev);
             std::printf("  \"instructions_per_event\": %.2f,\n",
                         static_cast<double>(counted.instructions) / ev);
-            std::printf("  \"branch_misses_per_event\": %.4f",
+            std::printf("  \"branch_misses_per_event\": %.4f,\n",
                         static_cast<double>(counted.branchMisses) / ev);
+            std::printf("  \"implied_clock_ghz\": %.3f",
+                        countedNs == 0.0 ? 0.0 : static_cast<double>(counted.cycles) / countedNs);
         }
         std::printf("\n}\n");
         return checksumStable ? 0 : 1;
@@ -205,6 +208,10 @@ int main(int argc, char** argv) {
                                               static_cast<double>(counted.cycles));
         std::printf("  branch misses/event %8.4f\n",
                     static_cast<double>(counted.branchMisses) / ev);
+        // Cycles accrue only while the thread runs; wall clock also counts time it did not.
+        // An implied clock well under the P-core maximum means the thread was descheduled.
+        std::printf("  implied clock       %8.2f GHz  (cycles / wall time; M1 P-core max 3.20)\n",
+                    countedNs == 0.0 ? 0.0 : static_cast<double>(counted.cycles) / countedNs);
     }
 
     std::printf("\nchecksum %016llx  %s\n", static_cast<unsigned long long>(checksum),
