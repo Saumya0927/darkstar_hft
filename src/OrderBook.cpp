@@ -5,12 +5,14 @@
 #include <dhft/Check.h>
 #include <dhft/OrderBook.h>
 #include <expected>
+#include <algorithm>
 #include <optional>
 #include <utility>
 
 namespace dhft {
 
-    OrderBook::OrderBook(std::size_t expectedOrders) {
+    OrderBook::OrderBook(std::size_t expectedOrders, Price minPrice, Price maxPrice)
+        : bids_{minPrice, maxPrice}, asks_{minPrice, maxPrice} {
         index_.reserve(expectedOrders);
         pool_.reserve(expectedOrders);
     }
@@ -27,14 +29,14 @@ namespace dhft {
 
         const std::uint32_t idx = alloc_slot();
 
-        auto place = [&](detail::PriceLevelMap auto& m) -> std::expected<void, RejectReason> {
+        auto place = [&](detail::PriceLevelBook auto& m) -> std::expected<void, RejectReason> {
             try {
                 if (!index_.try_emplace(o.id, idx).second) {
                     free_slot(idx);
                     return std::unexpected(RejectReason::DuplicateOrderId);
                 }
 
-                Level& lvl = m[o.price];
+                Level& lvl = m.insert(o.price);
 
                 Slot& s = pool_[idx];
                 s.id = static_cast<std::uint32_t>(o.id.v);
@@ -58,41 +60,33 @@ namespace dhft {
         return index_.contains(id);
     }
 
-    std::optional<Price> OrderBook::best_bid() const noexcept {
-        if (bids_.empty()) {
-            return std::nullopt;
-        }
-        return bids_.begin()->first;
-    }
+    std::optional<Price> OrderBook::best_bid() const noexcept { return bids_.best(); }
 
-    std::optional<Price> OrderBook::best_ask() const noexcept {
-        if (asks_.empty()) {
-            return std::nullopt;
-        }
-        return asks_.begin()->first;
-    }
+    std::optional<Price> OrderBook::best_ask() const noexcept { return asks_.best(); }
 
     void OrderBook::depth_into(Side side, std::size_t levels,
                                std::vector<std::pair<Price, Quantity>>& out) const {
         out.clear();
 
-        auto walk = [&](const detail::PriceLevelMap auto& m) {
-            std::size_t count = 0;
-            for (const auto& [price, level] : m) {
-                if (count == levels)
-                    break;
+        auto walk = [&](const detail::PriceLevelBook auto& m) {
+            m.for_each([&](Price price, const Level& level) {
                 Quantity total{};
                 for (std::uint32_t i = level.head; i != kNull; i = pool_[i].next)
                     total = total + Quantity{pool_[i].qty};
                 out.emplace_back(price, total);
-                ++count;
-            }
+            });
         };
 
         if (side == Side::Buy) {
             walk(bids_);
+            std::ranges::sort(out, [](const auto& a, const auto& b) { return a.first > b.first; });
         } else {
             walk(asks_);
+            std::ranges::sort(out, [](const auto& a, const auto& b) { return a.first < b.first; });
+        }
+
+        if (out.size() > levels) {
+            out.resize(levels);
         }
     }
 
@@ -113,13 +107,13 @@ namespace dhft {
         const Price price{pool_[idx].price};
         const Side side = static_cast<Side>(pool_[idx].side);
 
-        auto removeFrom = [&](detail::PriceLevelMap auto& m) {
-            auto lvlIt = m.find(price);
-            DHFT_CHECK_MSG(lvlIt != m.end(), "index points at a price level that does not exist");
+        auto removeFrom = [&](detail::PriceLevelBook auto& m) {
+            Level* lvl = m.find(price);
+            DHFT_CHECK_MSG(lvl != nullptr, "index points at a price level that does not exist");
 
-            unlink(lvlIt->second, idx);
-            if (lvlIt->second.head == kNull)
-                m.erase(lvlIt);
+            unlink(*lvl, idx);
+            if (lvl->head == kNull)
+                m.erase(price);
         };
 
         if (side == Side::Buy) {
@@ -162,15 +156,14 @@ namespace dhft {
     }
 
     std::optional<Order> OrderBook::front_at(Side side, Price price) const noexcept {
-        auto lookup = [&](const detail::PriceLevelMap auto& m) -> std::optional<Order> {
-            auto it = m.find(price);
-            if (it == m.end())
+        auto lookup = [&](const detail::PriceLevelBook auto& m) -> std::optional<Order> {
+            const Level* level = m.find(price);
+            if (level == nullptr)
                 return std::nullopt;
 
-            const Level& level = it->second;
-            DHFT_CHECK_MSG(level.head != kNull, "a price level must never be empty");
+            DHFT_CHECK_MSG(level->head != kNull, "a price level must never be empty");
 
-            const Slot& s = pool_[level.head];
+            const Slot& s = pool_[level->head];
             return Order{OrderId{s.id},
                          static_cast<Side>(s.side),
                          Price{s.price},
@@ -183,12 +176,12 @@ namespace dhft {
     Quantity OrderBook::total_quantity(Side side) const noexcept {
         Quantity total{};
 
-        auto sum = [&](const detail::PriceLevelMap auto& m) {
-            for (const auto& entry : m) {
-                for (std::uint32_t i = entry.second.head; i != kNull; i = pool_[i].next) {
+        auto sum = [&](const detail::PriceLevelBook auto& m) {
+            m.for_each([&](Price, const Level& level) {
+                for (std::uint32_t i = level.head; i != kNull; i = pool_[i].next) {
                     total = total + Quantity{pool_[i].qty};
                 }
-            }
+            });
         };
 
         if (side == Side::Buy) {
@@ -272,13 +265,14 @@ namespace dhft {
             return {};
         };
 
-        auto check_side = [&](const detail::PriceLevelMap auto& m, Side side) -> std::expected<void, std::string> {
-            for (const auto& [price, level] : m) {
-                if (auto r = check_level(price, level, side); !r.has_value()) {
-                    return r;
+        auto check_side = [&](const detail::PriceLevelBook auto& m, Side side) -> std::expected<void, std::string> {
+            std::expected<void, std::string> result{};
+            m.for_each([&](Price price, const Level& level) {
+                if (result.has_value()) {
+                    result = check_level(price, level, side);
                 }
-            }
-            return {};
+            });
+            return result;
         };
 
         if (auto r = check_side(bids_, Side::Buy); !r.has_value()) {
@@ -320,12 +314,12 @@ namespace dhft {
     }
 
     std::optional<OrderBook::Fill> OrderBook::take_from_front(Side side, Price price, Quantity want) noexcept {
-        auto takeFrom = [&](detail::PriceLevelMap auto& m) -> std::optional<Fill> {
-            auto lvlIt = m.find(price);
-            if (lvlIt == m.end())
+        auto takeFrom = [&](detail::PriceLevelBook auto& m) -> std::optional<Fill> {
+            Level* lvl = m.find(price);
+            if (lvl == nullptr)
                 return std::nullopt;
 
-            Level& level = lvlIt->second;
+            Level& level = *lvl;
             DHFT_CHECK_MSG(level.head != kNull, "a price level must never be empty");
 
             const std::uint32_t idx = level.head;
@@ -342,7 +336,7 @@ namespace dhft {
                 free_slot(idx);
                 index_.erase(id);
                 if (level.head == kNull) {
-                    m.erase(lvlIt);
+                    m.erase(price);
                     emptied = true;
                 }
             } else {

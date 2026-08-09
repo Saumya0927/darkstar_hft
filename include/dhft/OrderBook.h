@@ -2,12 +2,11 @@
 
 #include <dhft/Events.h>
 #include <dhft/Types.h>
+#include <dhft/PriceLadder.h>
 
 #include <concepts>
 #include <cstdint>
 #include <expected>
-#include <functional>
-#include <map>
 #include <cstddef>
 #include <optional>
 #include <string>
@@ -32,18 +31,18 @@ namespace dhft {
 namespace detail {
 
 template <typename M>
-concept PriceLevelMap =
-    std::same_as<typename M::key_type, Price> &&
-    requires(typename M::mapped_type& lvl) {
-        { lvl.head } -> std::convertible_to<std::uint32_t>;
-        { lvl.tail } -> std::convertible_to<std::uint32_t>;
-    };
+concept PriceLevelBook = requires(M& m, Price p) {
+    { m.erase(p) } -> std::same_as<void>;
+    { m.best() } -> std::same_as<std::optional<Price>>;
+};
 
 }
 
     class OrderBook {
     public:
-        explicit OrderBook(std::size_t expectedOrders = 65536);
+        explicit OrderBook(std::size_t expectedOrders = 65536,
+                           Price minPrice = Price{0},
+                           Price maxPrice = Price{16383});
 
         struct Fill {
             OrderId restingId{};
@@ -87,8 +86,8 @@ concept PriceLevelMap =
 
         std::vector<Slot> pool_;
         std::uint32_t freeHead_{kNull};
-        std::map<Price, Level, std::greater<>> bids_;
-        std::map<Price, Level> asks_;
+        PriceLadder<Side::Buy, Level> bids_;
+        PriceLadder<Side::Sell, Level> asks_;
         ankerl::unordered_dense::map<OrderId, std::uint32_t> index_;
 
         [[nodiscard]] std::uint32_t alloc_slot();

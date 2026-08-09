@@ -44,7 +44,8 @@ resting order.
 | baseline | 1665389 | 79.72 | 291.7 | 375.0 | - |
 | T4 lookup amplification | 635afaf | 81.33 | 291.7 | 416.7 | KEPT, no perf gain |
 | T5+T6 record layout + object pool | 0a91b60 | 68.75 | 250.0 | 333.3 | KEPT, -15.4% and two ticks off p99.9 |
-| T8 open-addressed id map + capacity | (this) | 42.70 | 125.0 | 208.3 | KEPT, -37.9% and worst case -88% |
+| T8 open-addressed id map + capacity | 4fce4bc | 42.70 | 125.0 | 208.3 | KEPT, -37.9% and worst case -88% |
+| T9 hybrid price ladder | (this) | 27.50 | 83.3 | 125.0 | KEPT, -35.9% |
 
 ## T4 - lookup amplification (2026-08-06)
 
@@ -364,3 +365,84 @@ apparatus itself is sound.
   explained, but no longer worth chasing ahead of the branch work.
 - The split between "avoided rehashing" and "better heap layout" in the original reserve
   experiment was never isolated, and still has not been.
+
+## T9 - hybrid price ladder (2026-08-09)
+
+Replaced `std::map<Price, Level>` on each side with `PriceLadder<Side, Level>`: an array
+indexed by price tick, an occupancy bitmap, a cached best index, and a `std::map` tail for
+prices outside the band. Default band [0, 16383], chosen because it covers the unit tests
+(0-200), the golden scripts (90-105) and the benchmark (9900-10100).
+
+Spec: `docs/superpowers/specs/2026-08-08-price-ladder-design.md`.
+
+### Result
+
+Eight invocations per side, same tree, Release, alternating.
+
+| metric | before | after | change | test |
+|---|---|---|---|---|
+| ns/event | 42.9 | **27.5** | **-35.9%** | U=0, p=0.000155, complete separation |
+| p99 | 125.0 | **83.3** | -1 tick | stable in every run on both sides |
+| p99.9 | 208.3 | **125.0** | -2 ticks | stable in every run on both sides |
+| worst case | 14354 | 11896 | -17% | p=0.80 - **not significant** |
+| spread | 5.3% | 2.6% | | |
+
+**The worst case did not move, and that is the honest reading.** p=0.80 with fully
+overlapping samples. T8 removed the stall that dominated the tail; whatever remains at
+~12 us is not the price map.
+
+### Why T4 measured nothing here and T9 measured -36%
+
+T4 removed roughly one price-map lookup **per fill** and saw zero. Fills are a minority of
+events - the book grows from 19338 to 151874 in quantity, so most orders rest rather than
+trade. Roughly 2 ns/event against a then-80 ns baseline, inside the 6.08% noise floor.
+
+T9 removes price-map cost from **every** event. Different denominators, not a contradiction.
+This was predicted in the spec before the work started, from a probe measuring the structure
+in isolation at 3.1x even with zero level churn.
+
+### Cumulative
+
+| | ns/event | p99 | p99.9 | worst |
+|---|---|---|---|---|
+| M3 baseline (1665389) | 79.7 | 291.7 | 375.0 | ~115000 |
+| after T9 | **27.5** | **83.3** | **125.0** | ~12000 |
+| improvement | **-65%** | **-71%** | **-67%** | **-90%** |
+
+### Correctness
+
+- 164/164 in all three build configurations.
+- **The five golden files are byte-identical.** The entire price-level storage layer was
+  replaced and the engine's textual output did not move by one character.
+- Benchmark checksum `dc015ae88f2b6dd0`, unchanged since the M3 baseline.
+- `NaiveEngine` equivalence holds over the goldens plus 800 random scripts.
+- Zero leaks in `demo` and `bench`.
+
+### Three defects found by review before wiring it in
+
+None were caught by any test; all were found by re-running the check that motivated them.
+
+1. **Undefined behaviour in the ladder constructor.** `max.ticks - min.ticks` overflows;
+   UBSan confirmed it on [INT64_MIN, INT64_MAX], and nothing checked `min <= max`. Now
+   computed in unsigned arithmetic, which is defined to wrap, with `DHFT_CHECK` on both.
+2. **`rescan_best` scanned from the far end of the bitmap.** At the 16384-tick default band
+   with the book near 9900, that was ~100 empty words per rescan, every time the best level
+   emptied. After erasing the best every remaining level is necessarily worse, so the scan
+   can start at the erased level's word: **48.7 ns -> 4.5 ns**, and band width no longer
+   affects the cost at all.
+3. **`find` had no const overload**, so `front_at` - which is const - could not have
+   compiled. Solved with an explicit object parameter (`this Self&&`) so one body serves
+   both, rather than duplicating it or casting away const.
+
+A fourth near-miss is worth recording: the overflow guard was added but the constructor was
+not changed to call it. Everything compiled, `-Werror` was satisfied, and all 164 tests
+passed while the undefined behaviour remained. Only re-running the original UBSan probe
+exposed it.
+
+### Design note
+
+The spec called for a second traversal method, `for_each_from_best`, merging the array with
+the map tail in price order. It was dropped. Only `depth_into` needs sorted order, it is not
+on the hot path, and building it would have required walking the bitmap directionally with
+`1ULL << 64` undefined-behaviour edge cases. `depth_into` now collects via `for_each` and
+sorts. One traversal method instead of two, and a whole class of bug that never existed.
