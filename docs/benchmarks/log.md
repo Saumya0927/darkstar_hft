@@ -446,3 +446,60 @@ the map tail in price order. It was dropped. Only `depth_into` needs sorted orde
 on the hot path, and building it would have required walking the bitmap directionally with
 `1ULL << 64` undefined-behaviour edge cases. `depth_into` now collects via `for_each` and
 sorts. One traversal method instead of two, and a whole class of bug that never existed.
+
+### T9 under sudo, with counters
+
+```
+ns/event   27.22 (spread 1.9%)
+p99        83.3      p99.9  125.0
+worst      4583 ns   over 1us: 1   over 10us: 0
+
+cycles/event           86.30
+instructions/event    267.40
+IPC                     3.10
+branch misses/event    1.7870
+implied clock           3.20 GHz
+```
+
+| | after T8 | after T9 | change |
+|---|---|---|---|
+| cycles/event | 136.07 | **86.30** | -36.6% |
+| instructions/event | 360.96 | **267.40** | -25.9% |
+| IPC | 2.32 | **3.10** | +33.6% |
+| branch misses/event | 2.9719 | **1.7870** | **-39.7%** |
+| implied clock | 3.20 | 3.20 | at maximum |
+
+**The branch prediction was correct.** The spec argued, before any code existed, that a
+red-black tree walk is the unpredictable-branch pattern - each step a comparison the
+predictor cannot learn - and that T9 might therefore deliver part of what T10 was going to
+chase. Branch misses fell 39.7%.
+
+Cycles/event fell 36.6% against a wall-clock fall of 35.9%. Two independent instruments,
+same answer.
+
+**IPC 3.10** on a core that retires 8/cycle, up from 2.32. The engine is no longer
+branch-bound to the same degree.
+
+### Milestone 3, baseline to here
+
+| | M3 baseline (1665389) | after T9 | improvement |
+|---|---|---|---|
+| ns/event | 79.7 | **27.2** | **-66%** |
+| p99 | 291.7 | **83.3** | **-71%** |
+| p99.9 | 375.0 | **125.0** | **-67%** |
+| worst case | ~115000 | **4583** | **-96%** |
+| events >1us (of 350000) | 13 | **1** | |
+| events >10us | 5 | **0** | |
+| cycles/event | n/a | 86.30 | |
+| branch misses/event | n/a | 1.79 | |
+
+### What is left
+
+- **Branch misses are still the largest identified cost**: 1.79/event at roughly 14 cycles
+  is about 25 of the 86 cycles per event, **29% of the budget**. The absolute count fell 40%
+  but the share is roughly unchanged, because the total shrank too.
+- **267 instructions per event.** Down from 509, still high for the work being done.
+- The remaining branches are largely data-dependent - does the order cross, is the level
+  emptied, is the fill full or partial. Static hints are the wrong tool for those; the M3
+  spec already flagged that published HFT work finds them unreliable. Instrumentation PGO
+  is the honest instrument: it measures the real branch probabilities rather than guessing.
