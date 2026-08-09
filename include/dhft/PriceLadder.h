@@ -21,16 +21,17 @@ namespace dhft {
         explicit PriceLadder(Price min, Price max)
           : min_{min},
             max_{max},
-            levels_(static_cast<std::size_t>(max.ticks - min.ticks + 1)),
+            levels_(span(min, max)),
             occupied_((levels_.size() + 63) / 64, 0) {}
 
-        [[nodiscard]] LevelT* find(Price p) noexcept {
-            if (in_band(p)) {
-                const std::size_t i = idx(p);
-                return test(i) ? &levels_[i] : nullptr;
+        template <typename Self>
+        [[nodiscard]] auto* find(this Self&& self, Price p) noexcept {
+            if (self.in_band(p)) {
+                const std::size_t i = self.idx(p);
+                return self.test(i) ? &self.levels_[i] : nullptr;
             }
-            const auto it = tail_.find(p);
-            return it == tail_.end() ? nullptr : &it->second;
+            const auto it = self.tail_.find(p);
+            return it == self.tail_.end() ? nullptr : &it->second;
         }
 
         void erase(Price p) noexcept {
@@ -38,7 +39,7 @@ namespace dhft {
                 const std::size_t i = idx(p);
                 clear(i);
                 if (i == bestIdx_) {
-                    bestIdx_ = rescan_best();
+                    bestIdx_ = rescan_best(i / 64);
                 }
                 return;
             }
@@ -89,6 +90,16 @@ namespace dhft {
         }
 
     private:
+        static constexpr std::size_t kMaxSpan = std::size_t{1} << 24;
+
+        [[nodiscard]] static std::size_t span(Price min, Price max) {
+            DHFT_CHECK_MSG(min.ticks <= max.ticks, "price band is inverted");
+            const std::uint64_t width = static_cast<std::uint64_t>(max.ticks) -
+                                        static_cast<std::uint64_t>(min.ticks);
+            DHFT_CHECK_MSG(width < kMaxSpan, "price band is implausibly wide");
+            return static_cast<std::size_t>(width) + 1;
+        }
+
         [[nodiscard]] Price price_at(std::size_t i) const noexcept {
             return Price{min_.ticks + static_cast<std::int64_t>(i)};
         }
@@ -109,15 +120,15 @@ namespace dhft {
             }
         }
 
-        [[nodiscard]] std::size_t rescan_best() const noexcept {
+        [[nodiscard]] std::size_t rescan_best(std::size_t startWord) const noexcept {
             if constexpr (Sd == Side::Buy) {
-                for (std::size_t w = occupied_.size(); w-- > 0; ) {
+                for (std::size_t w = startWord + 1; w-- > 0; ) {
                     if (occupied_[w] != 0) {
                         return w * 64 + (63 - static_cast<std::size_t>(std::countl_zero(occupied_[w])));
                     }
                 }
             } else {
-                for (std::size_t w = 0; w < occupied_.size(); ++w) {
+                for (std::size_t w = startWord; w < occupied_.size(); ++w) {
                     if (occupied_[w] != 0) {
                         return w * 64 + static_cast<std::size_t>(std::countr_zero(occupied_[w]));
                     }
