@@ -1,5 +1,7 @@
 #include <dhft/bench/Counters.h>
 
+#include <dhft/Check.h>
+
 #include <dlfcn.h>
 #include <unistd.h>
 
@@ -39,18 +41,31 @@ struct KperfDataApi {
     int (*kpep_config_kpc_map)(void*, std::size_t*, std::size_t);
 };
 
-// Event names differ per chip generation, so each metric carries fallbacks.
+// Event names differ per chip generation, so each metric carries fallbacks. The
+// pointer-to-member ties a metric to its destination field here and nowhere else:
+// with a name repeated in a read-side comparison chain, a typo would report a
+// plausible zero, and end() needs root so no unprivileged test could catch it.
 struct Alias {
     const char* label;
+    std::uint64_t CounterSample::* field;
     std::array<const char*, 4> names;
 };
 
-constexpr std::array<Alias, 4> kAliases{{
-    {"cycles", {"FIXED_CYCLES", "CPU_CLK_UNHALTED.THREAD", "CPU_CLK_UNHALTED.CORE", nullptr}},
-    {"instructions", {"FIXED_INSTRUCTIONS", "INST_ALL", "INST_RETIRED.ANY", nullptr}},
-    {"branches", {"INST_BRANCH", "BR_INST_RETIRED.ALL_BRANCHES", nullptr, nullptr}},
-    {"branch-misses",
+// The speculative L1D variants come first on purpose: on A14/M1 the two _NONSPEC
+// events contend for one counter slot, so asking for both loses the store side.
+constexpr std::array<Alias, 6> kAliases{{
+    {"cycles", &CounterSample::cycles,
+     {"FIXED_CYCLES", "CPU_CLK_UNHALTED.THREAD", "CPU_CLK_UNHALTED.CORE", nullptr}},
+    {"instructions", &CounterSample::instructions,
+     {"FIXED_INSTRUCTIONS", "INST_ALL", "INST_RETIRED.ANY", nullptr}},
+    {"branches", &CounterSample::branches,
+     {"INST_BRANCH", "BR_INST_RETIRED.ALL_BRANCHES", nullptr, nullptr}},
+    {"branch-misses", &CounterSample::branchMisses,
      {"BRANCH_MISPRED_NONSPEC", "BRANCH_MISPREDICT", "BR_MISP_RETIRED.ALL_BRANCHES", nullptr}},
+    {"l1d-miss-ld", &CounterSample::l1dMissLd,
+     {"L1D_CACHE_MISS_LD", "L1D_CACHE_MISS_LD_NONSPEC", "MEM_LOAD_RETIRED.L1_MISS", nullptr}},
+    {"l1d-miss-st", &CounterSample::l1dMissSt,
+     {"L1D_CACHE_MISS_ST", "L1D_CACHE_MISS_ST_NONSPEC", nullptr, nullptr}},
 }};
 
 // kpc_force_all_ctrs_set(1) claims the PMU process-wide; two live readers would fight.
@@ -77,6 +92,9 @@ struct Counters::Impl {
     bool ready{false};
     std::string status{"not initialised"};
     std::vector<std::string> events;
+    // Parallel to events, filled at the same single push site: which metric each
+    // configured counter feeds.
+    std::vector<std::uint64_t CounterSample::*> fields;
 
     std::uint32_t classes{0};
     bool claimedPmu{false};
@@ -159,10 +177,12 @@ struct Counters::Impl {
                 if (d.kpep_db_event(db, name, &ev) == 0 && ev != nullptr &&
                     d.kpep_config_add_event(cfg, &ev, 0, nullptr) == 0) {
                     events.emplace_back(alias.label);
+                    fields.push_back(alias.field);
                     break;
                 }
             }
         }
+        DHFT_CHECK_MSG(events.size() == fields.size(), "resolved labels and fields desynced");
         if (events.empty()) {
             status = "no known PMU events resolved for this CPU";
             return false;
@@ -258,22 +278,12 @@ CounterSample Counters::end() noexcept {
         return s;
     }
 
-    for (std::size_t i = 0; i < impl_->events.size(); ++i) {
+    for (std::size_t i = 0; i < impl_->fields.size(); ++i) {
         const std::size_t slot = impl_->map[i];
         if (slot >= kMaxCounters) {
             continue;
         }
-        const std::uint64_t delta = after[slot] - impl_->before[slot];
-        const std::string& label = impl_->events[i];
-        if (label == "cycles") {
-            s.cycles = delta;
-        } else if (label == "instructions") {
-            s.instructions = delta;
-        } else if (label == "branches") {
-            s.branches = delta;
-        } else if (label == "branch-misses") {
-            s.branchMisses = delta;
-        }
+        s.*(impl_->fields[i]) = after[slot] - impl_->before[slot];
     }
     s.valid = true;
     return s;

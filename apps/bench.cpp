@@ -157,6 +157,10 @@ int main(int argc, char** argv) {
                         static_cast<double>(counted.instructions) / ev);
             std::printf("  \"branch_misses_per_event\": %.4f,\n",
                         static_cast<double>(counted.branchMisses) / ev);
+            std::printf("  \"l1d_miss_ld_per_event\": %.4f,\n",
+                        static_cast<double>(counted.l1dMissLd) / ev);
+            std::printf("  \"l1d_miss_st_per_event\": %.4f,\n",
+                        static_cast<double>(counted.l1dMissSt) / ev);
             std::printf("  \"implied_clock_ghz\": %.3f",
                         countedNs == 0.0 ? 0.0 : static_cast<double>(counted.cycles) / countedNs);
         }
@@ -197,6 +201,15 @@ int main(int argc, char** argv) {
                 tail.modify.percentile_ns(0.999), tail.modify.count());
 
     std::printf("\nhardware counters: %s\n", counters.status().c_str());
+    // Printed even without root: a counter that silently failed to resolve would otherwise
+    // report zero, which reads exactly like a genuine zero.
+    if (!counters.resolved_events().empty()) {
+        std::printf("  events resolved    ");
+        for (const auto& e : counters.resolved_events()) {
+            std::printf("%s ", e.c_str());
+        }
+        std::printf("\n");
+    }
     if (counted.valid) {
         const auto ev = static_cast<double>(lastBatch.events);
         std::printf("  cycles/event        %8.2f\n", static_cast<double>(counted.cycles) / ev);
@@ -208,6 +221,16 @@ int main(int argc, char** argv) {
                                               static_cast<double>(counted.cycles));
         std::printf("  branch misses/event %8.4f\n",
                     static_cast<double>(counted.branchMisses) / ev);
+        std::printf("  L1D miss ld/event   %8.4f\n", static_cast<double>(counted.l1dMissLd) / ev);
+        std::printf("  L1D miss st/event   %8.4f\n", static_cast<double>(counted.l1dMissSt) / ev);
+        // A miss costs roughly 12 cycles to L2. This is the share of the cycle budget that
+        // prefetching could in principle address -- the T10 question, measured not guessed.
+        std::printf("  L1D miss cycles     %8.1f%% of budget (at ~12 cy/miss)\n",
+                    counted.cycles == 0
+                        ? 0.0
+                        : 100.0 * 12.0 *
+                              static_cast<double>(counted.l1dMissLd + counted.l1dMissSt) /
+                              static_cast<double>(counted.cycles));
         // Cycles accrue only while the thread runs; wall clock also counts time it did not.
         // An implied clock well under the P-core maximum means the thread was descheduled.
         std::printf("  implied clock       %8.2f GHz  (cycles / wall time; M1 P-core max 3.20)\n",

@@ -12,6 +12,8 @@ struct CounterSample {
     std::uint64_t instructions{};
     std::uint64_t branches{};
     std::uint64_t branchMisses{};
+    std::uint64_t l1dMissLd{};
+    std::uint64_t l1dMissSt{};
     bool valid{false};
 };
 
