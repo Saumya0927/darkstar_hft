@@ -793,3 +793,102 @@ leaks in `demo` and `bench`. Release preset now measures **26.44 ns/event at 0.2
 | `-mcpu=native` | rejected - byte-identical output |
 | `-fwhole-program-vtables` | **adopted** with hidden visibility, -4.8% |
 | instrumentation PGO | works, -9.2%, kept opt-in pending a non-synthetic profile |
+
+---
+
+## Full-codebase review
+
+Every file read end to end. Findings below are what survived checking; each defect was
+reproduced before being fixed.
+
+### Defect 1: undefined behaviour in `bench --reps 0`
+
+Every reported statistic reduces over `nsPerEvent`/`p99`/`p999`. At `--reps 0` the loops
+never run, the vectors are empty, and `*std::min_element(begin, end)` dereferences `end()`.
+
+```
+bench.cpp:179: runtime error: reference binding to null pointer of type 'double'
+AddressSanitizer:DEADLYSIGNAL
+```
+
+### Defect 2: `bench --reps abc` terminates
+
+`std::stoll` throws `std::invalid_argument`; `main` has no handler.
+`libc++abi: terminating due to uncaught exception`.
+
+### Defect 3: unknown options silently ignored
+
+`bench --typo 1` ran a completely normal benchmark. A mistyped flag was indistinguishable
+from an honoured one - which could have silently invalidated any measurement in this log.
+
+All three fixed: one conversion helper that rejects junk and trailing characters, range
+checks (`--reps >= 1`, no negative counts, `--min-price <= --max-price`), and unknown
+options rejected with a usage message.
+
+### Defect 4: `Samples::add` after `finalise` left `sorted_` true
+
+Latent - no caller does it today - but `percentile_ns` would have read a half-sorted vector
+and the `DHFT_CHECK` guarding it would have passed. `add` now clears the flag, so the class
+is correct by construction rather than by convention.
+
+### Defect 5: the tail map had NO coverage through the engine
+
+The important one. `GenConfig` defaults to prices 95-105 and every equivalence, property and
+golden test stays inside the default `[0, 16383]` band. **The `PriceLadder` tail map was
+never exercised through `OrderBook` or `MatchingEngine` by any test.**
+
+That is precisely where this codebase documents its sharpest hazard: `take_from_front` and
+`cancel` hold a `Level*` across `m.erase(price)`, which for an in-band price only clears a
+bitmap bit but for a tail price destroys a `std::map` node.
+
+Five tests added: all-out-of-band prices, prices straddling the band edge, negative prices, a
+book-state comparison with `validate()` after every event on a straddling band, and an
+explicit modify/cancel reject-path script (the generator only ever emits positive quantities
+against live ids, so those rejects were unreachable from random scripts).
+
+**Proven to reach the path, not assumed.** Injecting the documented use-after-free - reading
+`level.head` after `m.erase(price)` - produces:
+
+| test | result under ASan |
+|---|---|
+| `AgreesOnRandomScripts` (in-band) | **passes** - erase only clears a bit, as documented |
+| `AgreesWhenEveryPriceIsOutsideTheLadderBand` | **`heap-use-after-free` at OrderBook.cpp:350** |
+
+The old suite could not have caught it. The current code is correct - it reads everything it
+needs before erasing - and that is now enforced by a test rather than by a comment.
+
+### Verified correct, no change needed
+
+- **Modify sequence semantics match `NaiveEngine` exactly.** An increase takes a fresh
+  sequence and loses time priority; a decrease keeps its place; both consume one sequence on
+  success and none on reject; both engines check quantity before identity. This is the area
+  `REVIEW_LOOP.md` names as one of the two worst defects the project has had, so it was
+  re-derived from both sources rather than trusted, and is now covered by an explicit test.
+- **`add()` exception safety.** The catch erases the index entry, returns the slot, and
+  rethrows. No path leaks a slot or leaves a half-linked level.
+- **No reference outlives a `pool_` reallocation.** Links are indices; `add` holds no map
+  iterator across other work.
+- **Slot accounting.** `validate()` proves `live + free == pool.size()`, which catches both a
+  leaked slot and a double free - neither visible to any leak detector, since the vector
+  still owns the memory.
+- **Edge probes, all clean under ASan+UBSan**: a one-tick band with traffic either side, the
+  `int32` price extremes, saturating quantity at 2x `INT32_MAX`, the widest legal band
+  (2^24-1 ticks), and 20000 orders on a single level then swept by one aggressor.
+- **Ownership.** Zero `new`/`delete`/`malloc` anywhere; one `unique_ptr`, for the `Counters`
+  PIMPL. Every other pointer is a non-owning observer, which is R.30/F.7, not a gap.
+
+### Noted, deliberately not changed
+
+- `io/Script.cpp` reads ids with `>>` into `std::uint64_t`, which accepts `-5` and wraps.
+  Test-only parser fed by files in the repo.
+- `Generate.cpp` short-circuits `!live.empty() && pctDist(rng) < ...`, so RNG consumption
+  depends on `live` being empty. Deterministic given the seed - the generator never consults
+  the engine - so reproducibility holds. A smell, not a bug.
+- `TextSink::on_event` is `noexcept` and writes to an `ostream`. Streams do not throw unless
+  exceptions are enabled on them, which nothing here does.
+
+### Gate
+
+**172/172** (was 167; +5 tail-coverage tests) in debug, relassert and release. Golden files
+byte-identical. Checksum `dc015ae88f2b6dd0`. Zero leaks in `demo` and `bench`. Release
+throughput unchanged at 25.8-26.3 ns/event.

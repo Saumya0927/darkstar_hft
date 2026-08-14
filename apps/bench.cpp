@@ -23,34 +23,76 @@ struct Options {
     std::int64_t maxPrice{10100};
 };
 
+[[noreturn]] void fail(const std::string& message) {
+    std::fprintf(stderr, "bench: %s\n", message.c_str());
+    std::fprintf(stderr,
+                 "usage: bench [--json] [--reps N] [--events N] [--warmup N] [--seed N]\n"
+                 "             [--min-price N] [--max-price N]\n");
+    std::exit(2);
+}
+
+// stoll throws on junk and main has no handler, so every conversion goes through here.
+long long number(const std::vector<std::string>& args, std::size_t at, const std::string& flag) {
+    if (at + 1 >= args.size()) {
+        fail(flag + " needs a value");
+    }
+    const std::string& text = args[at + 1];
+    try {
+        std::size_t consumed = 0;
+        const long long value = std::stoll(text, &consumed);
+        if (consumed != text.size()) {
+            fail(flag + ": '" + text + "' has trailing characters");
+        }
+        return value;
+    } catch (const std::exception&) {
+        fail(flag + ": '" + text + "' is not a number");
+    }
+}
+
 Options parse(int argc, char** argv) {
     Options o;
     const std::vector<std::string> args(argv + 1, argv + argc);
     for (std::size_t i = 0; i < args.size(); ++i) {
-        const auto next = [&](std::size_t at) -> long long {
-            return at + 1 < args.size() ? std::stoll(args[at + 1]) : 0;
+        const auto nonNegative = [&](const std::string& flag) {
+            const long long v = number(args, i, flag);
+            if (v < 0) {
+                fail(flag + " must not be negative");
+            }
+            return v;
         };
         if (args[i] == "--json") {
             o.json = true;
         } else if (args[i] == "--reps") {
-            o.reps = static_cast<int>(next(i));
+            const long long v = nonNegative(args[i]);
+            // Every reported statistic reduces over these vectors; at zero they are empty
+            // and min_element would dereference end(). UBSan caught exactly that.
+            if (v < 1) {
+                fail("--reps must be at least 1");
+            }
+            o.reps = static_cast<int>(v);
             ++i;
         } else if (args[i] == "--events") {
-            o.events = static_cast<std::size_t>(next(i));
+            o.events = static_cast<std::size_t>(nonNegative(args[i]));
             ++i;
         } else if (args[i] == "--warmup") {
-            o.warmup = static_cast<std::size_t>(next(i));
+            o.warmup = static_cast<std::size_t>(nonNegative(args[i]));
             ++i;
         } else if (args[i] == "--seed") {
-            o.seed = static_cast<std::uint64_t>(next(i));
+            o.seed = static_cast<std::uint64_t>(nonNegative(args[i]));
             ++i;
         } else if (args[i] == "--min-price") {
-            o.minPrice = static_cast<std::int64_t>(next(i));
+            o.minPrice = static_cast<std::int64_t>(number(args, i, args[i]));
             ++i;
         } else if (args[i] == "--max-price") {
-            o.maxPrice = static_cast<std::int64_t>(next(i));
+            o.maxPrice = static_cast<std::int64_t>(number(args, i, args[i]));
             ++i;
+        } else {
+            // Silently ignoring a typo looks exactly like the flag having been honoured.
+            fail("unknown option '" + args[i] + "'");
         }
+    }
+    if (o.minPrice > o.maxPrice) {
+        fail("--min-price must not exceed --max-price");
     }
     return o;
 }

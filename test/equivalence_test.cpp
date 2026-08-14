@@ -192,3 +192,96 @@ TEST(Equivalence, BooksAgreeOnFullLadder) {
     }
   }
 }
+
+// The default OrderBook band is [0, 16383]. Every other equivalence test prices inside it,
+// so the PriceLadder tail map never runs through the engine. These three do.
+TEST(Equivalence, AgreesWhenEveryPriceIsOutsideTheLadderBand) {
+  for (std::uint64_t seed = 1; seed <= 100; ++seed) {
+    GenConfig cfg;
+    cfg.seed = seed;
+    cfg.events = 300;
+    cfg.minPrice = 100000;
+    cfg.maxPrice = 100010;
+    expectSameStream(generate(cfg), "all-tail seed=" + std::to_string(seed));
+    if (HasFatalFailure()) {
+      return;
+    }
+  }
+}
+
+TEST(Equivalence, AgreesWhenPricesStraddleTheBandEdge) {
+  for (std::uint64_t seed = 1; seed <= 100; ++seed) {
+    GenConfig cfg;
+    cfg.seed = seed;
+    cfg.events = 300;
+    cfg.minPrice = 16378;
+    cfg.maxPrice = 16388;
+    expectSameStream(generate(cfg), "straddle seed=" + std::to_string(seed));
+    if (HasFatalFailure()) {
+      return;
+    }
+  }
+}
+
+TEST(Equivalence, AgreesOnNegativePrices) {
+  for (std::uint64_t seed = 1; seed <= 100; ++seed) {
+    GenConfig cfg;
+    cfg.seed = seed;
+    cfg.events = 300;
+    cfg.minPrice = -5;
+    cfg.maxPrice = 5;
+    expectSameStream(generate(cfg), "negative seed=" + std::to_string(seed));
+    if (HasFatalFailure()) {
+      return;
+    }
+  }
+}
+
+TEST(Equivalence, BooksAgreeWhenLevelsLiveInTheTail) {
+  for (std::uint64_t seed = 1; seed <= 100; ++seed) {
+    GenConfig cfg;
+    cfg.seed = seed;
+    cfg.events = 300;
+    cfg.minPrice = 16378;
+    cfg.maxPrice = 16388;
+    const auto script = generate(cfg);
+
+    CollectingSink fastSink;
+    MatchingEngine fast{fastSink};
+    CollectingSink slowSink;
+    reference::NaiveEngine slow{slowSink};
+
+    for (const auto& e : script) {
+      fast.process(e);
+      slow.process(e);
+      const auto v = fast.book().validate();
+      ASSERT_TRUE(v.has_value()) << "straddle seed=" << seed << ": " << v.error();
+    }
+
+    const std::string label = "straddle seed=" + std::to_string(seed);
+    expectSameLadder(fast.book(), slow, Side::Buy, label + " bids");
+    expectSameLadder(fast.book(), slow, Side::Sell, label + " asks");
+    if (HasFatalFailure()) {
+      return;
+    }
+  }
+}
+
+// Neither engine's modify rejects are reachable from the generator, which only ever emits
+// positive quantities against live ids. The two must agree on the reject reason AND on
+// whether a sequence number was consumed, which only shows up in later time priority.
+TEST(Equivalence, AgreesOnModifyAndCancelRejectPaths) {
+  const std::vector<InEvent> script{
+      InEvent::new_order(OrderId{1}, Side::Buy, Price{100}, Quantity{5}),
+      InEvent::new_order(OrderId{2}, Side::Buy, Price{100}, Quantity{5}),
+      InEvent::modify(OrderId{99}, Quantity{3}),
+      InEvent::modify(OrderId{1}, Quantity{0}),
+      InEvent::modify(OrderId{1}, Quantity{-4}),
+      InEvent::cancel(OrderId{99}),
+      InEvent::modify(OrderId{99}, Quantity{0}),
+      InEvent::new_order(OrderId{3}, Side::Buy, Price{100}, Quantity{5}),
+      InEvent::modify(OrderId{1}, Quantity{9}),
+      InEvent::new_order(OrderId{4}, Side::Sell, Price{100}, Quantity{20}),
+  };
+  expectSameStream(script, "modify/cancel reject paths");
+}
