@@ -589,3 +589,103 @@ did not move.
 byte-identical. Benchmark checksum unchanged. `leaks --atExit` reports zero for `demo` and
 `bench` on the non-sanitised build. The success path of `validate()` allocates nothing -
 the only strings built are on the failure return.
+
+---
+
+## L1D cache misses measured: the prefetch question, answered
+
+`Counters` resolved only cycles, instructions, branches and branch-misses, so "should we
+prefetch?" had been an opinion. Now measured, under `sudo`, 400000 events:
+
+```
+ns/event                26.54  (spread 3.2%)
+cycles/event            87.09
+instructions/event     267.87
+IPC                      3.08
+branch misses/event     1.7820
+L1D miss ld/event       4.3804
+L1D miss st/event       0.8292
+implied clock            3.13 GHz
+```
+
+### The first derived number printed was wrong, and the other counters prove it
+
+`bench` printed "L1D miss cycles 71.8% of budget (at ~12 cy/miss)". That figure assumes no
+miss overlaps another, and it cannot be true:
+
+```
+5.21 misses x 12 cycles                        = 62.5 cycles
+87.09 - 62.5                                   = 24.6 cycles left
+267.87 instructions in 24.6 cycles             = IPC 10.9
+M1 P-core retires at most 8/cycle               -> impossible
+```
+
+IPC had already said so: a memory-bound workload has **low** IPC, and this one rose to 3.08
+after T9. The line has been relabelled `L1D miss ceiling ... if none overlapped`, with the
+assumed latency printed, so it cannot be read as a measurement again.
+
+### A defensible bound instead
+
+```
+cycles/event                                     87.09
+floor: 267.9 instructions at peak 8 IPC          33.5
+unexplained                                      53.6
+branch misses, 1.782 at ~14 cycles               24.9   (29% of budget)
+therefore memory stalls + dependency chains     <=28.7  (33% of budget, an upper bound)
+naive miss cost                                  62.5
+implied overlap factor                          >=2.2x
+```
+
+Memory is worth **at most a third** of the budget and shares that third with dependency
+stalls. Branch misses remain the largest single identified cost at 29%.
+
+### What 4.38 load misses per event actually means
+
+Per event the engine touches: the id-map bucket, the map's value array, the pool slot, the
+ladder level, the occupancy word, and one or two chain neighbours - about four to six
+distinct cache lines. **4.38 misses per event is therefore roughly one miss per structure
+touched.** The book holds on the order of 10^5 live orders, so `pool_` and `index_` together
+are several MB against a 128 KB L1d. These misses are not waste; they are the floor for data
+structures this size, and they hit in the 12 MB L2.
+
+That matters for the conclusion: **prefetching cannot reduce the number of misses, only hide
+their latency - and the latency is already being hidden at >=2.2x overlap.**
+
+### Where a prefetch could still pay, and why it is not T10
+
+The per-event chain is serial: id -> hash bucket -> slot index -> `pool_[idx]`. The second
+load cannot issue until the first returns. The bucket address for the **next** event is
+computable immediately, so software-pipelining across events would break the chain.
+
+That requires a batch or lookahead API. `process(const InEvent&)` takes one event and cannot
+see the next, and prefetching `script[i+1]` from inside the harness would measure a harness
+trick rather than the engine. A real feed delivers packets of events, so a batch entry point
+is legitimate production design - which makes this **rung 3 work, not T10 micro-tuning.**
+
+### T10, re-scoped on evidence
+
+- **`__builtin_prefetch` - deferred, not rejected.** Now justified in principle by a real
+  measurement, but it needs an interface change. Revisit with feed ingestion.
+- **`[[likely]]`/`[[unlikely]]` - still skip.** Unchanged reasoning: the branches are
+  data-dependent.
+- **Three build-flag experiments remain**, none requiring a code change:
+  `-fwhole-program-vtables` (three `blr` indirect calls survive ThinLTO in
+  `MatchingEngine::process` - disassembled and counted), `-mcpu=native`
+  (`DHFT_TUNE_NATIVE` is OFF and no preset enables it), and instrumentation PGO.
+
+### Correction to the M3 tail figures
+
+The T9 entry records "worst 4583 ns, over 1us: 1, over 10us: 0" and the cumulative table
+reports a 96% worst-case improvement. Six unprivileged runs of the same unmodified binary:
+
+| run | 1 | 2 | 3 | 4 | 5 | 6 |
+|---|---|---|---|---|---|---|
+| worst (ns) | 15000 | 9083 | 17917 | 5667 | 34167 | 4708 |
+| over 1us | 7 | 2 | 2 | 2 | 2 | 1 |
+| over 10us | 3 | 0 | 1 | 0 | 1 | 0 |
+
+**4583 ns and "over 10us: 0" were a single lucky draw, not a property of the engine.** The
+direction is real - the M3 baseline was ~115000 ns and nothing now approaches it - but the
+honest statement is "worst case now varies between roughly 5 and 35 us", not "4583 ns". The
+handover already warned that `max_ns` is a single extreme value; this is that warning
+arriving. The 15875 ns seen in the counter run above is unremarkable, not a regression.

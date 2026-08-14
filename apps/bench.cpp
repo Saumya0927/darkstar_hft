@@ -223,14 +223,17 @@ int main(int argc, char** argv) {
                     static_cast<double>(counted.branchMisses) / ev);
         std::printf("  L1D miss ld/event   %8.4f\n", static_cast<double>(counted.l1dMissLd) / ev);
         std::printf("  L1D miss st/event   %8.4f\n", static_cast<double>(counted.l1dMissSt) / ev);
-        // A miss costs roughly 12 cycles to L2. This is the share of the cycle budget that
-        // prefetching could in principle address -- the T10 question, measured not guessed.
-        std::printf("  L1D miss cycles     %8.1f%% of budget (at ~12 cy/miss)\n",
+        // A CEILING, not a measurement: it assumes no miss overlaps another. Check it
+        // against IPC before believing it -- if instructions/IPC leaves no room for this
+        // many stalled cycles, the misses are being absorbed out-of-order.
+        constexpr double kL2LatencyCycles = 12.0;
+        std::printf("  L1D miss ceiling    %8.1f%% of cycles if none overlapped (at %.0f cy each)\n",
                     counted.cycles == 0
                         ? 0.0
-                        : 100.0 * 12.0 *
+                        : 100.0 * kL2LatencyCycles *
                               static_cast<double>(counted.l1dMissLd + counted.l1dMissSt) /
-                              static_cast<double>(counted.cycles));
+                              static_cast<double>(counted.cycles),
+                    kL2LatencyCycles);
         // Cycles accrue only while the thread runs; wall clock also counts time it did not.
         // An implied clock well under the P-core maximum means the thread was descheduled.
         std::printf("  implied clock       %8.2f GHz  (cycles / wall time; M1 P-core max 3.20)\n",
