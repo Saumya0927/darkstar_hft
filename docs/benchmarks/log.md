@@ -892,3 +892,63 @@ needs before erasing - and that is now enforced by a test rather than by a comme
 **172/172** (was 167; +5 tail-coverage tests) in debug, relassert and release. Golden files
 byte-identical. Checksum `dc015ae88f2b6dd0`. Zero leaks in `demo` and `bench`. Release
 throughput unchanged at 25.8-26.3 ns/event.
+
+---
+
+## Final counters, post-devirtualization
+
+`sudo ./build-release/apps/bench --reps 9` on the shipped Release build.
+
+```
+ns/event               25.46  (spread 3.1%)      p99 83.3      p99.9 125.0
+cycles/event           82.74
+instructions/event    245.58
+IPC                     2.97
+branch misses/event    1.7894
+L1D miss ld/event      4.3314
+L1D miss st/event      0.8130
+implied clock           3.21 GHz
+```
+
+| metric | pre-devirt | final | change |
+|---|---|---|---|
+| ns/event | 26.54 | 25.46 | -4.1% |
+| cycles/event | 87.09 | 82.74 | -5.0% |
+| instructions/event | 267.87 | 245.58 | **-8.3%** |
+| IPC | 3.08 | 2.97 | -3.6% |
+| **branch misses/event** | 1.7820 | 1.7894 | **+0.4%** |
+| L1D miss ld/event | 4.3804 | 4.3314 | -1.1% |
+
+### The reason the devirtualization won is not the reason that was assumed
+
+The T10 entry framed the three surviving `blr` as a cost worth removing without saying how
+they cost. The counters answer it: **branch misses did not move at all.** The branch target
+buffer saw one target and predicted it perfectly. The win is **instruction count** - 22 fewer
+per event - from deleting three call sequences and inlining the sink body.
+
+IPC fell from 3.08 to 2.97, which is not a regression. The instructions removed were cheap
+and perfectly predicted, so the surviving mix is denser in real work. Cycles fell 5.0% and
+instructions 8.3%; both moving down is the result.
+
+Worth recording because it looks contradictory: statically `MatchingEngine::process` grew
+from 260 to 307 instructions, because the callee was inlined into it. Dynamically,
+instructions per event fell, because the call, the return and the callee prologue/epilogue
+all vanished. A bigger function doing less work.
+
+### Cycle budget, final
+
+```
+cycles/event                                     82.74
+floor: 245.6 instructions at peak 8 IPC          30.7
+branch misses, 1.7894 at ~14 cycles              25.1   30% of budget
+memory stalls + dependency chains               <=27.0   33% of budget, upper bound
+naive miss cost, 5.14 x 12 cycles                61.7
+implied overlap                                 >=2.3x
+```
+
+The printed `L1D miss ceiling` of 74.6% remains a ceiling and remains refuted by the same
+arithmetic as before: 5.14 misses stalling 12 cycles each would leave 21 cycles to retire
+245.6 instructions, an IPC of 11.7 on a core that retires at most 8.
+
+**implied clock 3.21 GHz against a 3.20 GHz P-core maximum** - the thread held the core for
+effectively the whole measured window, so none of this is contaminated by descheduling.

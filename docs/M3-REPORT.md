@@ -11,7 +11,7 @@ Full measurement history in `docs/benchmarks/log.md`; this is the summary and th
 
 | | M3 baseline (`1665389`) | now | change |
 |---|---|---|---|
-| ns/event | 79.7 | **25.8** | **-68%** |
+| ns/event | 79.7 | **25.5** | **-68%** |
 | p99 | 291.7 | **83.3** | **-71%** |
 | p99.9 | 375.0 | **125.0** | **-67%** |
 | worst case | ~115000 | see caveat below | |
@@ -26,17 +26,59 @@ cancel      41.7 /  83.3   (87451 samples)
 modify      83.3 / 125.0   (52272 samples)
 ```
 
-Hardware counters, last measured under `sudo` **before** the T10 devirtualization:
+Hardware counters, final, measured under `sudo` on the shipped Release build:
 
 ```
-cycles/event           87.09
-instructions/event    267.87
-IPC                     3.08     (up from 2.32 after T8)
-branch misses/event    1.7820
-L1D miss ld/event      4.3804
-L1D miss st/event      0.8292
-implied clock           3.13 GHz  (M1 P-core max 3.20)
+ns/event               25.46     (spread 3.1%)
+cycles/event           82.74
+instructions/event    245.58
+IPC                     2.97
+branch misses/event    1.7894
+L1D miss ld/event      4.3314
+L1D miss st/event      0.8130
+implied clock           3.21 GHz  (M1 P-core max 3.20 -- the thread held the core)
 ```
+
+### What the counters say about the devirtualization, which is not what was predicted
+
+| metric | pre-devirt | final | change |
+|---|---|---|---|
+| ns/event | 26.54 | 25.46 | -4.1% |
+| cycles/event | 87.09 | 82.74 | -5.0% |
+| instructions/event | 267.87 | 245.58 | **-8.3%** |
+| IPC | 3.08 | 2.97 | -3.6% |
+| **branch misses/event** | 1.7820 | 1.7894 | **+0.4%** |
+| L1D miss ld/event | 4.3804 | 4.3314 | -1.1% |
+
+**Branch misses did not move.** An indirect call is often assumed to cost through
+misprediction; here it did not, because the branch target buffer saw exactly one target and
+learned it perfectly. **The win was instruction count and lost inlining, not prediction.**
+Removing three call sequences and inlining the sink body cut 22 instructions per event.
+
+IPC fell slightly, and that is not a regression: the instructions removed were cheap and
+perfectly predicted, so the remaining mix is denser in real work. Cycles and instructions
+both fell; that is the result.
+
+There is an apparent contradiction worth resolving. Statically, `MatchingEngine::process`
+grew from 260 to 307 instructions — because the callee was inlined *into* it. Dynamically,
+instructions per event **fell**, because the call, the return, and the callee's
+prologue/epilogue all disappeared. Bigger function, less work.
+
+### A defensible cycle budget
+
+```
+cycles/event                                     82.74
+floor: 245.6 instructions at peak 8 IPC          30.7
+branch misses, 1.7894 at ~14 cycles              25.1   (30% of budget)
+therefore memory stalls + dependency chains     <=27.0   (33% of budget, an upper bound)
+naive miss cost, 5.14 misses x 12 cycles         61.7
+implied overlap factor                          >=2.3x
+```
+
+The benchmark also prints an `L1D miss ceiling` of 74.6%. **That is a ceiling, not a
+measurement**, and the other counters refute it: 5.14 misses stalling 12 cycles each would
+leave 21 cycles to retire 245.6 instructions, an IPC of 11.7 on a core that retires at most
+8. The line is labelled accordingly in the tool so it cannot be misread later.
 
 **The worst-case figure needs a caveat, and it corrects an earlier claim in this project.**
 Earlier entries record "worst case 4583 ns, events >10us: 0" as an achievement. Six runs of
@@ -192,7 +234,7 @@ in-band tests carried on passing.
 ## 7. State at the end of M3
 
 ```
-throughput   25.8 ns/event      p99 83.3 ns      p99.9 125.0 ns
+throughput   25.5 ns/event      p99 83.3 ns      p99.9 125.0 ns   (under sudo)
 tests        172, green in debug (ASan+UBSan), relassert, release
 goldens      5 pairs, byte-identical since before M3
 checksum     dc015ae88f2b6dd0, unchanged from the M3 baseline
@@ -203,8 +245,6 @@ Release builds with `-O3`, ThinLTO, whole-program devirtualization and `-dead_st
 
 ### What is left undone, honestly
 
-- **The counter figures in section 1 predate the T10 devirtualization.** They need one
-  `sudo ./build-release/apps/bench --reps 9` to be current.
 - **PGO is available and unadopted**, pending a profile from something other than the
   benchmark it is measured on.
 - **Prefetch is deferred to rung 3**, where a feed delivers batches and the cross-event
