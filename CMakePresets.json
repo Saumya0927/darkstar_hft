@@ -38,11 +38,12 @@
     {
       "name": "release",
       "inherits": "base",
-      "displayName": "Release (-O2, ThinLTO, dead-strip)",
+      "displayName": "Release (-O3, ThinLTO, devirtualized, dead-strip)",
       "binaryDir": "${sourceDir}/build-release",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
-        "DHFT_ENABLE_LTO": "ON"
+        "DHFT_ENABLE_LTO": "ON",
+        "DHFT_WHOLE_PROGRAM_VTABLES": "ON"
       }
     }
   ],

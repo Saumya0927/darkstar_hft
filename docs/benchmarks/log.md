@@ -689,3 +689,107 @@ direction is real - the M3 baseline was ~115000 ns and nothing now approaches it
 honest statement is "worst case now varies between roughly 5 and 35 us", not "4583 ns". The
 handover already warned that `max_ns` is a single extreme value; this is that warning
 arriving. The 15875 ns seen in the counter run above is unremarkable, not a regression.
+
+---
+
+## T10: three build-flag experiments, two winners and a stale noise floor
+
+No engine code changed. Each variant was built in its own tree so all binaries existed at
+once and could be A/B'd in a single session.
+
+### The null control came first
+
+`base` and `native` turned out **byte-identical by md5**, which makes them a free null
+control: any difference measured between them is pure noise.
+
+| comparison | median A | median B | change | U | p | verdict |
+|---|---|---|---|---|---|---|
+| **base vs native (byte-identical)** | 27.18 | 27.20 | +0.1% | 43 | 0.279 | no effect, as it must be |
+| base vs wpvh (devirtualized) | 27.16 | 25.87 | **-4.8%** | 4 | 0.00186 | significant |
+| base vs pgo | 27.41 | 24.89 | **-9.2%** | 0 | 0.00016 | significant, separated |
+| base vs both | 27.38 | 24.01 | **-12.3%** | 0 | 0.00016 | significant, separated |
+| pgo vs both | 25.18 | 24.12 | -4.2% | 2 | 0.00062 | devirtualization adds on top of PGO |
+
+Eight alternating invocations per side, `--reps 5` each, sample = the batch median.
+
+### The 6.08% noise floor was stale, and it would have thrown away a real win
+
+Every earlier entry judged results against a 6.08% floor measured at the M3 baseline. The
+null control above puts current run-to-run noise at **+0.1%, p=0.279**, with per-run spreads
+of 0.2 to 3%. The engine got roughly three times faster during M3, so a fixed *percentage*
+floor measured against an 80 ns baseline no longer describes a 27 ns one.
+
+**The -4.8% devirtualization win would have been dismissed as noise under the old floor.**
+Re-measure the floor whenever the baseline moves; do not inherit it.
+
+### `-mcpu=native`: rejected, no effect whatsoever
+
+Byte-identical binary. Verified the flag genuinely reached the compiler (`-O3 -mcpu=native
+-flto=thin` in the real invocation, `DHFT_TUNE_NATIVE:BOOL=ON` in the cache) before
+concluding anything - the first attempt had silently applied no flags at all, because zsh
+does not word-split unquoted variables and the whole flag string arrived as one argument.
+
+The reason it does nothing is structural: the engine is pure scalar integer code. The extra
+target features `-mcpu=native` unlocks - fp16, dotprod, crypto - are simply never used.
+`countr_zero`/`countl_zero` lower to `rbit`/`clz`, which are baseline ARMv8.
+
+### `-fwhole-program-vtables`: a no-op on its own
+
+Also byte-identical to baseline. The flag is accepted and does nothing under Apple `ld64`
+(ld-1267), because with default symbol visibility the compiler must assume a class could be
+overridden outside the link unit.
+
+Paired with `-fvisibility=hidden -fvisibility-inlines-hidden` it works. Attribution was
+checked with a fourth arm rather than assumed:
+
+| variant | instructions in `process` | indirect calls |
+|---|---|---|
+| base | 260 | 3 |
+| `-mcpu=native` | 260 | 3 |
+| `-fwhole-program-vtables` alone | 260 | 3 |
+| hidden visibility alone | 260 | 3 |
+| **hidden + whole-program-vtables** | **307** | **0** |
+
+Hidden visibility alone changes nothing; it only grants permission. The devirtualization is
+genuinely `-fwhole-program-vtables`. The three `blr` are the `Sink::on_event` calls - the
+type-erasure candidate flagged by *C++ Software Design* and recorded in the handover as
+"never been measured". Now measured, and removed by a build flag rather than a redesign.
+
+`DHFT_WHOLE_PROGRAM_VTABLES` therefore sets all three flags. An option that silently does
+nothing without a companion flag is a trap, so the option expresses the intent instead.
+
+**Adopted into the release preset.**
+
+### PGO: the largest single win, and deliberately NOT adopted
+
+`-fprofile-generate` -> run the benchmark -> `llvm-profdata merge` -> `-fprofile-use`.
+`process` goes from 260 to **1873 instructions** as PGO inlines the hot callees. -9.2%
+alone, -12.3% combined with devirtualization.
+
+**It stays opt-in, and the number should be treated with suspicion**, because the profile
+was trained on the benchmark and then measured on the same benchmark. That is
+overfitting by construction. A profile from real market data would be worth adopting; a
+profile from a synthetic generator tells you how fast the engine runs the generator. The
+mechanism is in place (`DHFT_PGO=generate|use`, `DHFT_PGO_PROFILE`) so it can be retrained
+once rung 3 supplies real traffic.
+
+One real snag, kept as a note: `-fprofile-use` fails the build with `-Werror` because
+`apps/demo.cpp`'s `main` collides with the `main` the profile was trained on - IR profiles
+key on function name. The count is discarded, which is correct, but it surfaces as
+`-Wbackend-plugin`, not the `profile-instr-*` warnings that were already suppressed.
+
+### Gate
+
+167/167 in debug, relassert and release for every variant built, including the instrumented
+one. Checksum `dc015ae88f2b6dd0` on all six binaries. Golden files byte-identical. Zero
+leaks in `demo` and `bench`. Release preset now measures **26.44 ns/event at 0.2% spread**.
+
+### T10 verdict
+
+| tool | outcome |
+|---|---|
+| `[[likely]]`/`[[unlikely]]` | skipped - branches are data-dependent |
+| `__builtin_prefetch` | deferred to rung 3 - needs a batch API, misses are already overlapped 2.2x |
+| `-mcpu=native` | rejected - byte-identical output |
+| `-fwhole-program-vtables` | **adopted** with hidden visibility, -4.8% |
+| instrumentation PGO | works, -9.2%, kept opt-in pending a non-synthetic profile |

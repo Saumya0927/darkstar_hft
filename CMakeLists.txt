@@ -11,6 +11,11 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 option(DHFT_ENABLE_LTO    "Enable ThinLTO (Release)"                 OFF)
 option(DHFT_TUNE_NATIVE   "Tune for the host CPU (-mcpu=native)"     OFF)
 option(DHFT_WERROR        "Treat warnings as errors"                 ON)
+option(DHFT_WHOLE_PROGRAM_VTABLES "Devirtualize across the LTO unit" OFF)
+
+set(DHFT_PGO "off" CACHE STRING "Profile-guided optimization: off, generate or use")
+set_property(CACHE DHFT_PGO PROPERTY STRINGS off generate use)
+set(DHFT_PGO_PROFILE "" CACHE FILEPATH "Merged .profdata, required when DHFT_PGO=use")
 
 # Shared build settings live on one INTERFACE target that every other target links.
 # Nothing is compiled into dhft_options itself; it just carries flags outward.
@@ -33,6 +38,44 @@ endif()
 if(DHFT_ENABLE_LTO)
   target_compile_options(dhft_options INTERFACE -flto=thin)
   target_link_options(dhft_options INTERFACE -flto=thin)
+endif()
+
+# T10 experiment: let the linker resolve virtual calls it can prove have one target.
+# Needs LTO to see across translation units; asserting otherwise would silently do nothing.
+if(DHFT_WHOLE_PROGRAM_VTABLES)
+  if(NOT DHFT_ENABLE_LTO)
+    message(FATAL_ERROR "DHFT_WHOLE_PROGRAM_VTABLES needs DHFT_ENABLE_LTO=ON")
+  endif()
+  # The hidden-visibility flags are not optional extras. Measured: -fwhole-program-vtables
+  # on its own produces a byte-identical binary under Apple ld64, because with default
+  # visibility the compiler must assume a class could be overridden outside the link unit.
+  # With hidden visibility the three indirect calls in MatchingEngine::process become zero.
+  target_compile_options(dhft_options INTERFACE
+    -fwhole-program-vtables -fvisibility=hidden -fvisibility-inlines-hidden)
+  target_link_options(dhft_options INTERFACE -fwhole-program-vtables)
+endif()
+
+# T10 experiment: instrumentation PGO. Build with generate, run the benchmark, merge the
+# raw profiles with llvm-profdata, then rebuild with use pointing at the merged file.
+if(DHFT_PGO STREQUAL "generate")
+  target_compile_options(dhft_options INTERFACE -fprofile-generate)
+  target_link_options(dhft_options INTERFACE -fprofile-generate)
+elseif(DHFT_PGO STREQUAL "use")
+  if(NOT EXISTS "${DHFT_PGO_PROFILE}")
+    message(FATAL_ERROR "DHFT_PGO=use needs DHFT_PGO_PROFILE set to a merged .profdata file")
+  endif()
+  # A function the profile never saw is a warning, and -Werror would turn the whole
+  # experiment into a build failure rather than a measurement. backend-plugin covers the
+  # hash mismatch every other executable's main() gets: profiles key on function name, so
+  # demo's main collides with the bench main the profile was trained on. Its count is
+  # discarded, which is the correct outcome -- only apps/bench.cpp is being measured.
+  target_compile_options(dhft_options INTERFACE
+    -fprofile-use=${DHFT_PGO_PROFILE}
+    -Wno-error=profile-instr-unprofiled
+    -Wno-error=profile-instr-out-of-date
+    -Wno-error=backend-plugin)
+elseif(NOT DHFT_PGO STREQUAL "off")
+  message(FATAL_ERROR "DHFT_PGO must be off, generate or use (got '${DHFT_PGO}')")
 endif()
 target_link_options(dhft_options INTERFACE $<$<CONFIG:Release>:-Wl,-dead_strip>)
 
