@@ -1,7 +1,9 @@
 # Handover — read this first after a context compaction
 
 Written 2026-08-09. Repo: `/Users/saumyapatel/Dark Star Technologies/Random/CPP_Project`.
-Last commit: `8832bc8`. **Working tree is clean and everything builds and passes.**
+Last commit: `83ad1d3`. **Working tree is clean and everything builds and passes.**
+**Milestone 3 is COMPLETE.** Read `docs/M3-REPORT.md` for the verdict; this doc is the
+operating manual.
 
 This supersedes the previous handover (written 2026-08-06 at `e785b6f`), whose "where we
 are" section described a mid-refactor tree that no longer exists.
@@ -16,7 +18,8 @@ Do these in order. Do not skip to the code.
 2. **Read `docs/REVIEW_LOOP.md`.** It is a per-change discipline the user demanded
    explicitly and said must never be forgotten. Section 3 below repeats it, but read the
    file.
-3. **Read `docs/benchmarks/log.md`** (505 lines, append-only). It is the primary artefact of
+3. **Read `docs/M3-REPORT.md`** (the milestone verdict), then **`docs/benchmarks/log.md`**
+   (894 lines, append-only). It is the primary artefact of
    Milestone 3 and records every measurement including the ones that failed. Four
    hypotheses in it were wrong; knowing which saves you repeating them.
 4. **Read the current M3 spec and plan**:
@@ -70,8 +73,8 @@ simulator** for backtesting. Both are needed. Nothing built so far is wasted.
 - **M2 (done)** — verification harness: invariants, golden files, property tests, a
   brute-force reference model (`NaiveEngine`), an equivalence driver, a delta-debugging
   shrinker.
-- **M3 (nearly done)** — performance engineering. T1-T6, T8, T9 complete. T7 skipped with
-  reasons. T10 and T11 remain.
+- **M3 (done)** — performance engineering. T1-T6, T8, T9, T10, T11 complete. T7 skipped with
+  reasons. Result: 79.7 -> 25.8 ns/event. See `docs/M3-REPORT.md`.
 
 ---
 
@@ -188,7 +191,7 @@ reference/                   NaiveEngine oracle, `dhft_reference`  assistant
 testkit/                     Generate/Golden/Shrink, `dhft_testkit` assistant
 bench/                       Samples/Harness/Counters, `dhft_bench` assistant
 apps/                        demo.cpp, bench.cpp
-test/                        164 gtest cases + golden/
+test/                        172 gtest cases + golden/
 docs/                        specs, plans, benchmarks/log.md, REVIEW_LOOP.md
 ```
 
@@ -262,24 +265,32 @@ vocabulary, which `PriceLadder` correctly does not have.
 
 ```
                     M3 baseline    now      change
-ns/event                   79.7    27.2      -66%
+ns/event                   79.7    25.8      -68%
 p99                       291.7    83.3      -71%
 p99.9                     375.0   125.0      -67%
-worst case             ~115,000   4,583      -96%
-events > 1us (of 350k)       13       1
-events > 10us                 5       0
+worst case             ~115,000   varies    see below
 
-cycles/event                        86.30
+cycles/event                        86.30   (pre-devirtualization)
 instructions/event                 267.40
 IPC                                  3.10
 branch misses/event                  1.79
-implied clock                        3.20 GHz  (P-core maximum)
+L1D miss ld/event                    4.38
+L1D miss st/event                    0.83
 ```
 
-Noise floor: 6.08% throughput at the baseline; run-to-run spread is now 1.9% under sudo.
+**The worst case has no stable value.** Six runs of one unmodified binary gave 15000, 9083,
+17917, 5667, 34167, 4708 ns. Earlier entries quote "4583 ns, over 10us: 0" as a result; that
+was a single lucky draw. The baseline was ~115000 and nothing approaches it now -- state it
+that way, not as a number.
+
+**Do not reuse the 6.08% noise floor.** It was measured at the 80 ns baseline and was still
+being applied at 26 ns, where it would have discarded T10's real -4.8% win. A/B of two
+byte-identical binaries now measures +0.1%, p=0.279. Re-measure the floor when the baseline
+moves; the cheapest way is to A/B a build against itself.
+
 Benchmark checksum `dc015ae88f2b6dd0`, unchanged since the M3 baseline.
 
-**164 tests green in all three configs. Golden files byte-identical throughout M3. Zero
+**172 tests green in all three configs. Golden files byte-identical throughout M3. Zero
 leaks.**
 
 ---
@@ -296,8 +307,8 @@ T6  object pool + intrusive list DONE   user   /
 T7  A/B against plf::list        SKIPPED       reasons below
 T8  open-addressed id map        DONE   user   -37.9%, tail solved
 T9  hybrid price ladder          DONE   user   -35.9%, branch misses -40%
-T10 micro-tuning                 NOT STARTED
-T11 final report                 NOT STARTED   assistant
+T10 micro-tuning                 DONE   assistant  -4.8%, two of three tools rejected
+T11 final report                 DONE   assistant  docs/M3-REPORT.md
 ```
 
 **T7 skipped, and why:** `plf::list` cannot provide 28-byte records or index links — it
@@ -310,31 +321,22 @@ decisively and was adopted.
 
 ## 8. What is planned next
 
-### T10 — micro-tuning. Scope it down.
+### M3 is finished. See `docs/M3-REPORT.md`.
 
-The plan lists three tools. Current evidence says only one is worth doing:
+T10 landed as three build-flag experiments and no engine code:
 
-- **`[[likely]]`/`[[unlikely]]` — skip.** The remaining branches are data-dependent (does
-  this order cross, did the level empty, full or partial fill, buy or sell). There is no
-  biased branch to annotate. The M3 spec already flagged that published HFT work finds static
-  hints unreliable for exactly this case.
-- **`__builtin_prefetch` — cannot justify yet.** The plan says "confirmed by counters, not
-  suspected", and **`Counters` has no cache-miss event wired up** — its alias table resolves
-  only cycles, instructions, branches, branch-misses. Also IPC is 3.10, up from 2.32; a
-  memory-stalled workload has *low* IPC. Evidence points away from prefetch.
-- **Instrumentation PGO — do this.** It measures real branch probabilities instead of
-  guessing. `-fprofile-generate` -> run the benchmark -> `llvm-profdata merge` ->
-  `-fprofile-use`. Sampling PGO is unavailable (needs Linux perf).
-
-**Suggested prerequisite:** add L1D cache misses to the `Counters` alias table in
-`bench/src/Counters.cpp`. Small change, closes a gap the log has flagged twice (the
-unexplained split in the T8 reserve experiment between "avoided rehashing" and "better heap
-layout"), and turns the prefetch question from opinion into measurement.
-
-### T11 — final report. Assistant writes it.
-
-Baseline vs final, per event type, counters. An honest list of what was tried and rejected.
-A note on what the profile said versus what the hypothesis list predicted.
+- **`-mcpu=native` rejected** — byte-identical binary. The engine is scalar integer code, so
+  the extra target features are never used.
+- **`-fwhole-program-vtables` adopted**, but only together with `-fvisibility=hidden`. Alone
+  it is a no-op under Apple `ld64`. Together they remove the three indirect `Sink::on_event`
+  calls from `MatchingEngine::process`. -4.8%, p=0.00186. Now on in the release preset.
+- **PGO works (-9.2%) and is deliberately NOT adopted** — the profile was trained on the
+  benchmark and measured on the same benchmark. `DHFT_PGO=generate|use` and
+  `DHFT_PGO_PROFILE` exist for retraining on real traffic.
+- **Prefetch deferred, not rejected.** 4.38 L1D load misses/event is about one per structure
+  touched, and they are already overlapped >=2.2x. It could pay only by pipelining the next
+  event's hash bucket across the serial `id -> bucket -> slot -> pool_` chain, which needs a
+  batch API. That is rung-3 work.
 
 ### Then: rung 3, market-data ingestion
 
@@ -467,7 +469,7 @@ Sources are cited in the two 2026-08-08 specs.
 # three configs
 cmake --preset debug      # -O0 + ASan/UBSan          (correctness)
 cmake --preset relassert  # -O2, no sanitizers        (fast test runs, 20x faster)
-cmake --preset release    # -O2 + ThinLTO + dead_strip (measurement)
+cmake --preset release    # -O3 + ThinLTO + devirtualization + dead_strip (measurement)
 
 for p in debug relassert release; do
   cmake --build --preset $p -j8 && ctest --preset $p
