@@ -194,6 +194,14 @@ namespace dhft {
     }
 
     std::expected<void, std::string> OrderBook::validate() const {
+        // First: a corrupt bitmap would make the for_each walks below read out of bounds.
+        if (auto r = bids_.validate(); !r.has_value()) {
+            return std::unexpected("bid ladder: " + r.error());
+        }
+        if (auto r = asks_.validate(); !r.has_value()) {
+            return std::unexpected("ask ladder: " + r.error());
+        }
+
         std::vector<bool> seen(pool_.size(), false);
         std::size_t counted = 0;
 

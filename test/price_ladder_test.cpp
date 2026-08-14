@@ -24,6 +24,14 @@ std::vector<std::int64_t> visitPrices(const auto& ladder) {
   return out;
 }
 
+testing::AssertionResult valid(const auto& ladder) {
+  const auto r = ladder.validate();
+  if (r.has_value()) {
+    return testing::AssertionSuccess();
+  }
+  return testing::AssertionFailure() << r.error();
+}
+
 } // namespace
 
 TEST(PriceLadder, EmptyLadderFindsNothing) {
@@ -122,10 +130,13 @@ TEST(PriceLadder, ErasingTheBestRecomputesToTheNextBest) {
   ASSERT_EQ(b.best()->ticks, 108);
   b.erase(Price{105});
   EXPECT_EQ(b.best()->ticks, 108) << "erasing a non-best level must not move best";
+  EXPECT_TRUE(valid(b));
   b.erase(Price{108});
   EXPECT_EQ(b.best()->ticks, 103) << "erasing the best must recompute, not go stale";
+  EXPECT_TRUE(valid(b));
   b.erase(Price{103});
   EXPECT_FALSE(b.best());
+  EXPECT_TRUE(valid(b));
 }
 
 TEST(PriceLadder, BestSurvivesEmptyingAndRefilling) {
@@ -145,10 +156,12 @@ TEST(PriceLadder, OutOfBandLevelsParticipateInBest) {
   EXPECT_EQ(b.best()->ticks, 500) << "a better out-of-band level must win";
   (void)b.insert(Price{50});
   EXPECT_EQ(b.best()->ticks, 500) << "a worse out-of-band level must not win";
+  EXPECT_TRUE(valid(b));
   b.erase(Price{500});
   EXPECT_EQ(b.best()->ticks, 105) << "falls back to the in-band level";
   b.erase(Price{105});
   EXPECT_EQ(b.best()->ticks, 50) << "in-band empty, out-of-band supplies best";
+  EXPECT_TRUE(valid(b));
 }
 
 TEST(PriceLadder, AskOutOfBandLevelsParticipateInBest) {
@@ -169,10 +182,13 @@ TEST(PriceLadder, BestCrossesWordBoundaries) {
   EXPECT_EQ(b.best()->ticks, 130);
   b.erase(Price{130});
   EXPECT_EQ(b.best()->ticks, 64) << "rescan must cross from word 2 back to word 1";
+  EXPECT_TRUE(valid(b));
   b.erase(Price{64});
   EXPECT_EQ(b.best()->ticks, 63) << "and from word 1 to the top of word 0";
+  EXPECT_TRUE(valid(b));
   b.erase(Price{63});
   EXPECT_EQ(b.best()->ticks, 5);
+  EXPECT_TRUE(valid(b));
 }
 
 TEST(PriceLadder, AskBestCrossesWordBoundaries) {
@@ -184,10 +200,13 @@ TEST(PriceLadder, AskBestCrossesWordBoundaries) {
   EXPECT_EQ(a.best()->ticks, 5);
   a.erase(Price{5});
   EXPECT_EQ(a.best()->ticks, 63);
+  EXPECT_TRUE(valid(a));
   a.erase(Price{63});
   EXPECT_EQ(a.best()->ticks, 64);
+  EXPECT_TRUE(valid(a));
   a.erase(Price{64});
   EXPECT_EQ(a.best()->ticks, 130);
+  EXPECT_TRUE(valid(a));
 }
 
 TEST(PriceLadder, ForEachVisitsEveryLevelExactlyOnce) {
@@ -245,6 +264,33 @@ TEST(PriceLadder, ASingleTickBandWorks) {
   EXPECT_EQ(b.find(Price{101}), nullptr);
   b.erase(Price{100});
   EXPECT_FALSE(b.best());
+}
+
+TEST(PriceLadder, ValidateAcceptsABandWithPaddingBits) {
+  Bid b{Price{0}, Price{199}};
+  EXPECT_TRUE(valid(b)) << "200 levels occupy 4 words, so 56 bits are padding";
+  (void)b.insert(Price{199});
+  EXPECT_TRUE(valid(b)) << "the highest valid tick sits next to the padding";
+  (void)b.insert(Price{0});
+  b.erase(Price{199});
+  EXPECT_TRUE(valid(b));
+}
+
+TEST(PriceLadder, ValidateAcceptsABandThatFillsItsWordsExactly) {
+  Bid b{Price{0}, Price{127}};
+  EXPECT_TRUE(valid(b)) << "128 levels fill 2 words with no padding at all";
+  (void)b.insert(Price{127});
+  EXPECT_TRUE(valid(b)) << "every bit of the last word is legitimate here";
+}
+
+TEST(PriceLadder, ValidateAcceptsOutOfBandLevels) {
+  Ask a{Price{100}, Price{110}};
+  (void)a.insert(Price{105});
+  (void)a.insert(Price{5000});
+  (void)a.insert(Price{-7});
+  EXPECT_TRUE(valid(a));
+  a.erase(Price{5000});
+  EXPECT_TRUE(valid(a));
 }
 
 TEST(PriceLadder, TheDefaultSizedBandBehaves) {

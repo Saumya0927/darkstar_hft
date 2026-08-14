@@ -5,10 +5,12 @@
 
 #include <bit>
 #include <cstdint>
+#include <expected>
 #include <functional>
 #include <limits>
 #include <map>
 #include <optional>
+#include <string>
 #include <type_traits>
 #include <vector>
 
@@ -87,6 +89,44 @@ namespace dhft {
             for (const auto& [price, level] : tail_) {
                 f(price, level);
             }
+        }
+
+        [[nodiscard]] std::expected<void, std::string> validate() const {
+            // A set padding bit would make for_each and rescan_best index past levels_.
+            const std::size_t used = levels_.size() % 64;
+            if (used != 0 && (occupied_.back() & (~0ULL << used)) != 0) {
+                return std::unexpected("occupancy bit set past the end of the ladder");
+            }
+
+            // Recomputed the slow way on purpose: rescan_best is the thing under test.
+            std::size_t truth = kNone;
+            for (std::size_t w = 0; w < occupied_.size(); ++w) {
+                std::uint64_t word = occupied_[w];
+                while (word != 0) {
+                    const std::size_t i = w * 64 + static_cast<std::size_t>(std::countr_zero(word));
+                    if (truth == kNone || is_better(i, truth)) {
+                        truth = i;
+                    }
+                    word &= word - 1;
+                }
+            }
+
+            if (bestIdx_ != truth) {
+                const auto name = [](std::size_t i) {
+                    return i == kNone ? std::string{"none"} : std::to_string(i);
+                };
+                return std::unexpected("cached best index is " + name(bestIdx_) +
+                                       " but the true best is " + name(truth));
+            }
+
+            for (const auto& [price, level] : tail_) {
+                if (in_band(price)) {
+                    return std::unexpected("in-band price " + std::to_string(price.ticks) +
+                                           " is in the tail map");
+                }
+            }
+
+            return {};
         }
 
     private:

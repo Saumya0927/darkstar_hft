@@ -503,3 +503,89 @@ branch-bound to the same degree.
   emptied, is the fill full or partial. Static hints are the wrong tool for those; the M3
   spec already flagged that published HFT work finds them unreliable. Instrumentation PGO
   is the honest instrument: it measures the real branch probabilities rather than guessing.
+
+---
+
+## Closing the T9 verification gap: `PriceLadder::validate()`
+
+Step 5 of the T9 plan was skipped. The ladder shipped with a cached `bestIdx_` that nothing
+checked, which is the only piece of state in the engine that can produce a **plausible**
+wrong answer: the engine would match at a price with no orders behind it and every test
+would still pass.
+
+### What was written, and what was deliberately not
+
+The T9 spec listed five invariants. Three of them cannot fail:
+
+| spec invariant | verdict |
+|---|---|
+| 2. cached best is correct | **written** - the only silent-wrong-answer risk |
+| 4. tail holds out-of-band prices only | **written** - the routing rule the class rests on |
+| 1. bitmap agrees with the levels | already covered: `check_level` rejects a null-headed level, and a wrongly cleared bit surfaces as `index_.size() != counted` |
+| 3. no price in both structures | implied by 4 - the array only ever holds in-band prices |
+| 5. level count matches | tautological - `for_each` is built from exactly the two things it would compare |
+
+Writing 1, 3 and 5 would have produced three checks incapable of failing. **A check that
+cannot fail is worse than no check**, because it reads as coverage.
+
+A third check was added that the spec missed: **no occupancy bit set past the end of
+`levels_`**. `occupied_` is sized in whole words, so a band of 200 ticks has 56 padding
+bits; a set one would make `for_each` read `levels_[237]` out of bounds and `rescan_best`
+return an index that is not a level.
+
+The best index is recomputed by brute force over the whole bitmap, using the `for_each`
+idiom rather than `rescan_best`. That is deliberate: `rescan_best` is the function under
+test, and an oracle that calls the code it checks agrees with its bugs.
+
+### Mutation testing - five mutations, five caught
+
+| # | mutation | caught by | message |
+|---|---|---|---|
+| 1 | `erase` no longer invalidates the cached best | property_test, seed 1 event 4 | `bid ladder: cached best index is 96 but the true best is none` |
+| 2 | `insert` no longer updates the cached best | property_test, seed 1 event 0 | `ask ladder: cached best index is none but the true best is 99` |
+| 3 | `insert` routes every price to the tail | property_test, seed 1 event 0 | `ask ladder: in-band price 99 is in the tail map` |
+| 4 | `set()` also lights the top bit of the final word | price_ladder_test | `occupancy bit set past the end of the ladder` |
+| 5 | the `used != 0` guard removed | price_ladder_test **only** | false positive, as designed |
+
+Two results worth keeping:
+
+- Under mutation 4, `ValidateAcceptsABandThatFillsItsWordsExactly` stayed green. For a
+  128-tick band bit 63 of the final word is a legitimate index, so the check correctly
+  declines to fire. It discriminates rather than always firing.
+- **Mutation 5 was caught by exactly one test and nothing else.** `~0ULL << 0` is all ones,
+  so dropping the guard flags every legitimate bit in a band whose span is a multiple of 64.
+  `property_test` did not catch it - the default band's final word covers ticks 16320-16383
+  and is always empty at the prices the generator uses. Without that one test the guard
+  could have been deleted silently.
+
+**The default band has no padding bits at all** (16384 ticks = exactly 256 words), so
+Check A never executes through `OrderBook::validate()`. It only runs on ladders whose span
+is not a multiple of 64, and `price_ladder_test` did not call `validate()` at all. The check
+was untestable until those calls were added. Found by trying to mutate it, not by review.
+
+### Cost - measured, not assumed
+
+`validate()` runs after every event in `Property.InvariantsHoldAfterEveryEvent`: 500 seeds,
+roughly 350000 calls.
+
+| | before | after | change |
+|---|---|---|---|
+| `Property.InvariantsHoldAfterEveryEvent` | 55-65 ms | 77-79 ms | **+35%** |
+| full `ctest --preset relassert` | 0.87 s | 1.03 s | **+18%** |
+| benchmark ns/event | 27.83 | 27.83 | none |
+| benchmark checksum | `dc015ae88f2b6dd0` | `dc015ae88f2b6dd0` | none |
+
+The scan walks 256 words per side whether or not the book is small, about 160 ns per call.
+
+**Kept rather than optimised.** The obvious speed-up is to scan directionally from the
+extreme end and stop at the first set bit - which is what `rescan_best` does, and would make
+the oracle share the code path it exists to police. Independence is worth 22 ms in a suite
+that runs in one second. This is not the hot path, and the benchmark confirms the hot path
+did not move.
+
+### Gate
+
+167/167 (was 164; +3 ladder tests) in debug, relassert and release. Five golden files
+byte-identical. Benchmark checksum unchanged. `leaks --atExit` reports zero for `demo` and
+`bench` on the non-sanitised build. The success path of `validate()` allocates nothing -
+the only strings built are on the failure return.
