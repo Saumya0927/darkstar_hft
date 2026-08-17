@@ -183,12 +183,12 @@ namespace dhft {
         }
 
         [[nodiscard]] bool in_band(Price p) const noexcept {
-                  return p.ticks >= min_.ticks && p.ticks <= max_.ticks;
+            return p.ticks >= min_.ticks && p.ticks <= max_.ticks;
         }
 
         [[nodiscard]] std::size_t idx(Price p) const noexcept {
-                    DHFT_DCHECK(in_band(p));
-                  return static_cast<std::size_t>(p.ticks - min_.ticks);
+            DHFT_DCHECK(in_band(p));
+            return static_cast<std::size_t>(p.ticks - min_.ticks);
         }
 
         using TailCmp = std::conditional_t<Sd == Side::Buy, std::greater<>, std::less<>>;

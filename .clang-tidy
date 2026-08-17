@@ -1,3 +1,6 @@
+# Not wired into CMake -- this is for editor diagnostics only. The disabled checks below
+# were each disabled because they fire on something deliberate in this codebase, not
+# because they are inconvenient. Anything that could find a real bug stays on.
 Checks: >
   -*,
   bugprone-*,
@@ -8,6 +11,57 @@ Checks: >
   -readability-magic-numbers,
   -cppcoreguidelines-avoid-magic-numbers,
   -readability-identifier-length,
-  -modernize-use-trailing-return-type
+  -modernize-use-trailing-return-type,
+  -cppcoreguidelines-avoid-do-while,
+  -readability-math-missing-parentheses,
+  -cppcoreguidelines-missing-std-forward,
+  -cppcoreguidelines-pro-type-vararg,
+  -cppcoreguidelines-pro-bounds-constant-array-index,
+  -cppcoreguidelines-pro-bounds-pointer-arithmetic,
+  -cppcoreguidelines-pro-type-reinterpret-cast,
+  -readability-uppercase-literal-suffix,
+  -readability-braces-around-statements,
+  -modernize-use-designated-initializers,
+  -readability-function-cognitive-complexity,
+  -cppcoreguidelines-pro-bounds-avoid-unchecked-container-access,
+  -cppcoreguidelines-macro-usage,
+  -modernize-use-std-print
+
 WarningsAsErrors: ''
-HeaderFilterRegex: '(include|io/include|reference/include|testkit/include)/dhft/.*'
+HeaderFilterRegex: '(include|io/include|reference/include|testkit/include|bench/include)/dhft/.*'
+
+# Why each of the additions above is off:
+#
+#   avoid-do-while                    DHFT_CHECK and DHFT_DCHECK must be do-while(false)
+#                                     to swallow a trailing semicolon. There is no
+#                                     alternative spelling.
+#   math-missing-parentheses          fires on `w * 64 + i`, where the precedence is both
+#                                     correct and the conventional way to write a bit index.
+#   missing-std-forward               fires on `this Self&&` (deducing this) and on
+#                                     `F&& f` in for_each, neither of which forwards on
+#                                     purpose -- the callable is invoked repeatedly.
+#   pro-type-vararg                   printf in bench and apps is deliberate; iostreams
+#                                     would add allocation and locale work to a tool whose
+#                                     job is measurement.
+#   pro-bounds-constant-array-index   indexing arrays by a computed index is the entire
+#                                     point of PriceLadder and the slot pool.
+#   pro-bounds-pointer-arithmetic     argv walking in apps.
+#   pro-type-reinterpret-cast         required to type dlsym results in Counters.
+#   uppercase-literal-suffix          the codebase writes 7u, not 7U. Consistent already.
+#   braces-around-statements          the codebase uses brace-less single statements in
+#                                     early-return guards. Consistent already.
+#   use-designated-initializers       aggregate init order is checked by the compiler here
+#                                     and the types are two or three fields wide.
+#   function-cognitive-complexity     validate() is a checker; its branch count is its job.
+#   avoid-unchecked-container-access  fires on every pool_[i] and levels_[i]. Indexed
+#                                     access without a bounds check IS the design -- T5,
+#                                     T6 and T9 exist to replace pointer chasing with it.
+#                                     validate() and DHFT_DCHECK cover the invariants.
+#   macro-usage                       DHFT_CHECK needs __FILE__ and __LINE__ at the call
+#                                     site, which a function cannot capture.
+#   use-std-print                     Check.h writes with fprintf on the abort path
+#                                     deliberately: it must not allocate or throw while
+#                                     reporting that an invariant already failed.
+#
+# The goal is a config where a surviving warning is worth reading. If this list starts
+# growing to silence real findings, that is a smell -- fix the code instead.

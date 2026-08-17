@@ -1,11 +1,12 @@
+#include <dhft/OrderBook.h>
+
+#include <dhft/Check.h>
 #include <dhft/Events.h>
 #include <dhft/Types.h>
 
-#include <cstdint>
-#include <dhft/Check.h>
-#include <dhft/OrderBook.h>
-#include <expected>
 #include <algorithm>
+#include <cstdint>
+#include <expected>
 #include <optional>
 #include <utility>
 
