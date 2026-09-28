@@ -41,18 +41,12 @@ struct KperfDataApi {
     int (*kpep_config_kpc_map)(void*, std::size_t*, std::size_t);
 };
 
-// Event names differ per chip generation, so each metric carries fallbacks. The
-// pointer-to-member ties a metric to its destination field here and nowhere else:
-// with a name repeated in a read-side comparison chain, a typo would report a
-// plausible zero, and end() needs root so no unprivileged test could catch it.
 struct Alias {
     const char* label;
     std::uint64_t CounterSample::* field;
     std::array<const char*, 4> names;
 };
 
-// The speculative L1D variants come first on purpose: on A14/M1 the two _NONSPEC
-// events contend for one counter slot, so asking for both loses the store side.
 constexpr std::array<Alias, 6> kAliases{{
     {"cycles", &CounterSample::cycles,
      {"FIXED_CYCLES", "CPU_CLK_UNHALTED.THREAD", "CPU_CLK_UNHALTED.CORE", nullptr}},
@@ -68,7 +62,6 @@ constexpr std::array<Alias, 6> kAliases{{
      {"L1D_CACHE_MISS_ST", "L1D_CACHE_MISS_ST_NONSPEC", nullptr, nullptr}},
 }};
 
-// kpc_force_all_ctrs_set(1) claims the PMU process-wide; two live readers would fight.
 bool& pmu_claimed() {
     static bool claimed = false;
     return claimed;
@@ -92,8 +85,6 @@ struct Counters::Impl {
     bool ready{false};
     std::string status{"not initialised"};
     std::vector<std::string> events;
-    // Parallel to events, filled at the same single push site: which metric each
-    // configured counter feeds.
     std::vector<std::uint64_t CounterSample::*> fields;
 
     std::uint32_t classes{0};
@@ -236,8 +227,6 @@ struct Counters::Impl {
 };
 
 Counters::Counters() : impl_{std::make_unique<Impl>()} {
-    // Framework loading and event resolution work unprivileged; only arming needs root.
-    // Doing them first turns "needs root" into a much more specific diagnostic.
     if (!impl_->load_frameworks() || !impl_->build_config()) {
         return;
     }

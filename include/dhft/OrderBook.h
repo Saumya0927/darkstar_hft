@@ -60,10 +60,6 @@ concept PriceLevelBook = requires(M& m, Price p) {
                         std::vector<std::pair<Price, Quantity>>& out) const;
         [[nodiscard]] std::expected<void, RejectReason> cancel(OrderId id) noexcept;
         [[nodiscard]] std::expected<void, RejectReason> modify(OrderId id, Quantity newQty, Sequence newSeq);
-        // Only tests call this since T4 folded the match loop into take_from_front, but do
-        // not delete it as dead code: it is the sole const caller of PriceLadder::find, so
-        // removing it leaves the const branch of that deducing-this template never
-        // instantiated and therefore never compiled.
         [[nodiscard]] std::optional<Order> front_at(Side side, Price price) const noexcept;
         [[nodiscard]] std::optional<Fill> take_from_front(Side side, Price price, Quantity want) noexcept;
         [[nodiscard]] Quantity total_quantity(Side side) const noexcept;

@@ -19,7 +19,6 @@ Side parse_side(const std::string& tok, int lineNo) {
     throw std::runtime_error("line " + std::to_string(lineNo) + ": bad side '" + tok + "'");
 }
 
-// Strip everything from the first '#' onward.
 void strip_comment(std::string& line) {
     const auto hash = line.find('#');
     if (hash != std::string::npos) {
@@ -41,7 +40,7 @@ std::vector<InEvent> parse_script(std::istream& in) {
         std::istringstream ls{line};
         std::string op;
         if (!(ls >> op)) {
-            continue; // blank or comment-only
+            continue;
         }
 
         if (op == "N") {

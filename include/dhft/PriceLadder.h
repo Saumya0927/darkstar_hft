@@ -92,9 +92,6 @@ namespace dhft {
         }
 
         [[nodiscard]] std::expected<void, std::string> validate() const {
-            // A set padding bit would make for_each and rescan_best index past levels_.
-            // The used != 0 guard is load-bearing: ~0ULL << 0 is all ones, which would
-            // flag every legitimate bit in a band whose span is a multiple of 64.
             const std::size_t used = levels_.size() % 64;
             if (used != 0) {
                 const std::uint64_t mask = ~0ULL << used;
@@ -103,7 +100,6 @@ namespace dhft {
                 }
             }
 
-            // Recomputed the slow way on purpose: rescan_best is the thing under test.
             std::size_t truth = kNone;
             for (std::size_t w = 0; w < occupied_.size(); ++w) {
                 std::uint64_t word = occupied_[w];

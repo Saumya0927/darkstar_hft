@@ -48,8 +48,6 @@ struct TailResult {
         : all{total}, newOrder{nNew}, cancel{nCancel}, modify{nModify} {}
 };
 
-// counters, when supplied, bracket exactly the measured window -- not the warm-up
-// and not the book-depth scans, which would otherwise inflate every per-event figure.
 [[nodiscard]] BatchResult run_batch(const std::vector<InEvent>& script, std::size_t warmup,
                                    Counters* counters = nullptr);
 

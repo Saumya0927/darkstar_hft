@@ -10,8 +10,6 @@ class Samples {
 public:
     explicit Samples(std::size_t capacity) { ticks_.reserve(capacity); }
 
-    // Clearing sorted_ here means a late add() can never leave percentile_ns() reading a
-    // half-sorted vector; the alternative was a convention nothing enforced.
     void add(std::uint32_t ticks) {
         ticks_.push_back(ticks);
         sorted_ = false;

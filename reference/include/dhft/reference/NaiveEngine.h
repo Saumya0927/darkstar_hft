@@ -11,10 +11,6 @@
 
 namespace dhft::reference {
 
-// A deliberately unoptimised matching engine. Every operation is a linear scan over one
-// flat vector; there is no index and no per-level list. Time priority is expressed purely
-// by Sequence. It exists to be obviously correct, so that agreement with MatchingEngine
-// is meaningful evidence that both are right.
 class NaiveEngine {
 public:
     explicit NaiveEngine(Sink& sink) noexcept;

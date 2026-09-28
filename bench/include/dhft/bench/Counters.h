@@ -17,9 +17,6 @@ struct CounterSample {
     bool valid{false};
 };
 
-// Reads Apple Silicon PMU counters through the private kperf/kperfdata frameworks.
-// Requires root. Everything is resolved with dlopen/dlsym, so a machine without the
-// frameworks links and runs fine -- available() is simply false and status() says why.
 class Counters {
 public:
     Counters();
