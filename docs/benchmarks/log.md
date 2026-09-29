@@ -952,3 +952,64 @@ arithmetic as before: 5.14 misses stalling 12 cycles each would leave 21 cycles 
 
 **implied clock 3.21 GHz against a 3.20 GHz P-core maximum** - the thread held the core for
 effectively the whole measured window, so none of this is contaminated by descheduling.
+
+---
+
+## Sampling profile: the first flame graph, and a check on the benchmark's own overhead
+
+Every M3 measurement was batch timing, PMU counters or disassembly. A sampling profile was
+listed in the T3 plan and never run, so the distribution of time *within* the 25 ns was
+never actually seen. Run now: `/usr/bin/sample` at 1 ms over 12 s of the release benchmark
+(`--reps 1500`, since the default run finishes in about 1.2 s and cannot be sampled),
+folded with the FlameGraph scripts.
+
+### Self time by leaf frame, 10,000 samples
+
+```
+42.2%  MatchingEngine::process       (with everything inlined into it: best(), the
+                                      match loop, event dispatch, the sink hash)
+13.6%  OrderBook::add
+11.9%  OrderBook::take_from_front
+10.0%  OrderBook::cancel
+ 8.5%  ankerl unordered_dense table  (index_ probe, erase and emplace)
+ 4.4%  OrderBook::modify
+ 3.8%  depth_into + total_quantity   (measure_depth, benchmark bookkeeping, not per event)
+ 3.2%  PriceLadder::erase, both sides
+ 2.1%  run_batch
+ 0.1%  everything in libsystem_malloc, combined
+```
+
+Two things worth recording.
+
+**Nothing allocates on the hot path.** malloc, free, bzero and memset together are eleven
+samples out of ten thousand, all attributable to startup and the per-repetition depth
+scan. This was asserted throughout M3 and is now observed rather than reasoned.
+
+**Attribution inside `process` is coarse by construction.** ThinLTO plus devirtualization
+inlined the ladder lookups, the sink and the match loop into one frame, so 42% self time
+means "the engine's control flow and everything the compiler folded into it", not that
+`process` itself does 42% of the work. Splitting it would require a build with inlining
+disabled, which measures a different program. The counter-based decomposition already in
+this log (branch misses ~30%, memory <=33%) is the better guide to what that 42% contains.
+
+### Is the benchmark's checksum sink inflating the engine number?
+
+`ChecksumSink::on_event` does six xor-multiply steps per event, and after devirtualization
+it inlines into `process`. Suspected that a meaningful slice of the published 25.5 ns was
+the benchmark measuring its own sink. A/B, same script, sixteen alternating runs each:
+
+```
+null sink       26.30 ns/event   [25.83, 41.67]
+checksum sink   27.18 ns/event   [26.75, 34.61]
+difference       0.88 ns/event   3.2% of the published figure
+```
+
+Not inflated. The sink is under a nanosecond and the published number stands.
+
+### What the profile changes
+
+Nothing about the engine, which is the honest result of a check like this. It confirms two
+claims that were previously inferred, and it puts a ceiling on what further micro work
+could return: the four `OrderBook` operations plus the index are ~48% of samples, and the
+rest is control flow already shown to be branch-bound. The remaining lever is the tail on
+Linux, as recorded in the T10 verdict, not the median on this machine.
