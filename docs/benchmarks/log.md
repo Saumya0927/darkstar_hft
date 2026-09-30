@@ -1013,3 +1013,28 @@ claims that were previously inferred, and it puts a ceiling on what further micr
 could return: the four `OrderBook` operations plus the index are ~48% of samples, and the
 rest is control flow already shown to be branch-bound. The remaining lever is the tail on
 Linux, as recorded in the T10 verdict, not the median on this machine.
+
+---
+
+## 64-bit order ids: slot 28 -> 32 bytes, cost measured
+
+Prerequisite for real data: CME order ids are 64-bit and the slot held 32. Widened the
+field, kept it first in the struct, static_assert moved to 32.
+
+Same-session A/B, previous binary against the new one, 16 alternating invocations pooled
+across two runs. The machine was noisier than usual (medians near 31 instead of 26, one
+outlier at 46), so both sides carry it equally.
+
+```
+28-byte slot (32-bit id)   median 31.67   [27.40, 45.95]
+32-byte slot (64-bit id)   median 31.55   [27.13, 40.06]
+change                     -0.4%   U=126   p=0.956   no detectable difference
+```
+
+For comparison the 128-bit experiment earlier cost +8.6% at p=0.00016, because
+`unsigned __int128` forces 16-byte alignment and pushed the slot to 48 bytes. 64 bits
+lands on a natural 8-byte boundary and the four extra bytes are invisible at this noise
+level. If there is a cost it is under about 3%, the resolution of this run.
+
+Correctness: the new test aborts on the previous engine (width check fires) and passes on
+this one. 173/173 in three configs, goldens byte-identical, checksum unchanged, zero leaks.
