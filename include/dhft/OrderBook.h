@@ -69,7 +69,7 @@ concept PriceLevelBook = requires(M& m, Price p) {
         static constexpr std::uint32_t kNull = 0xFFFFFFFFu;
 
         struct Slot {
-            std::uint32_t id{};
+            std::uint64_t id{};
             std::int32_t price{};
             std::int32_t qty{};
             std::uint32_t seq{};
@@ -77,7 +77,7 @@ concept PriceLevelBook = requires(M& m, Price p) {
             std::uint32_t prev{kNull};
             std::uint8_t side{};
         };
-        static_assert(sizeof(Slot) == 28, "Slot layout regressed");
+        static_assert(sizeof(Slot) == 32, "Slot layout regressed");
 
         struct Level {
             std::uint32_t head{kNull};

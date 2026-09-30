@@ -23,7 +23,6 @@ namespace dhft {
             return std::unexpected(RejectReason::BadQuantity);
         }
 
-        DHFT_CHECK_MSG(std::in_range<std::uint32_t>(o.id.v), "order id does not fit in 32 bits");
         DHFT_CHECK_MSG(std::in_range<std::int32_t>(o.price.ticks), "price does not fit in 32 bits");
         DHFT_CHECK_MSG(std::in_range<std::int32_t>(o.qty.v), "quantity does not fit in 32 bits");
         DHFT_CHECK_MSG(std::in_range<std::uint32_t>(o.seq.v), "sequence does not fit in 32 bits");
@@ -40,7 +39,7 @@ namespace dhft {
                 Level& lvl = m.insert(o.price);
 
                 Slot& s = pool_[idx];
-                s.id = static_cast<std::uint32_t>(o.id.v);
+                s.id = o.id.v;
                 s.price = static_cast<std::int32_t>(o.price.ticks);
                 s.qty = static_cast<std::int32_t>(o.qty.v);
                 s.seq = static_cast<std::uint32_t>(o.seq.v);

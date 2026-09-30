@@ -1,6 +1,8 @@
 #include <dhft/OrderBook.h>
 #include <gtest/gtest.h>
 
+#include <limits>
+
 using namespace dhft;
 
 namespace {
@@ -176,4 +178,23 @@ TEST(OrderBook, ContainsTracksLiveOrders) {
   EXPECT_TRUE(b.contains(OrderId{1}));
   ASSERT_TRUE(b.cancel(OrderId{1}).has_value());
   EXPECT_FALSE(b.contains(OrderId{1}));
+}
+
+TEST(OrderBook, AcceptsOrderIdsWiderThanThirtyTwoBits) {
+  OrderBook b;
+  const OrderId wide{(std::uint64_t{1} << 40) + 12345};
+  const OrderId wider{std::numeric_limits<std::uint64_t>::max() - 7};
+  ASSERT_TRUE(b.add(Order{wide, Side::Buy, Price{100}, Quantity{5}, Sequence{1}}).has_value());
+  ASSERT_TRUE(b.add(Order{wider, Side::Sell, Price{101}, Quantity{3}, Sequence{2}}).has_value());
+  EXPECT_TRUE(b.contains(wide));
+  EXPECT_TRUE(b.contains(wider));
+  EXPECT_FALSE(b.contains(OrderId{12345}));
+  ASSERT_TRUE(b.front_at(Side::Buy, Price{100}).has_value());
+  EXPECT_EQ(b.front_at(Side::Buy, Price{100})->id.v, wide.v);
+  const auto fill = b.take_from_front(Side::Sell, Price{101}, Quantity{3});
+  ASSERT_TRUE(fill.has_value());
+  EXPECT_EQ(fill->restingId.v, wider.v);
+  EXPECT_TRUE(b.cancel(wide).has_value());
+  EXPECT_FALSE(b.contains(wide));
+  EXPECT_TRUE(b.validate().has_value());
 }
