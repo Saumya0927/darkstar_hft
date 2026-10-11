@@ -60,10 +60,13 @@ concept PriceLevelBook = requires(M& m, Price p) {
                         std::vector<std::pair<Price, Quantity>>& out) const;
         [[nodiscard]] std::expected<void, RejectReason> cancel(OrderId id) noexcept;
         [[nodiscard]] std::expected<void, RejectReason> modify(OrderId id, Quantity newQty, Sequence newSeq);
+        [[nodiscard]] std::expected<void, RejectReason> modify(OrderId id, Price newPrice, Quantity newQty,
+                                                               Sequence newSeq);
         [[nodiscard]] std::optional<Order> front_at(Side side, Price price) const noexcept;
         [[nodiscard]] std::optional<Fill> take_from_front(Side side, Price price, Quantity want) noexcept;
         [[nodiscard]] Quantity total_quantity(Side side) const noexcept;
         [[nodiscard]] std::expected<void, std::string> validate() const;
+        [[nodiscard]] std::uint64_t tail_inserts() const noexcept;
 
     private:
         static constexpr std::uint32_t kNull = 0xFFFFFFFFu;
@@ -94,6 +97,9 @@ concept PriceLevelBook = requires(M& m, Price p) {
         void free_slot(std::uint32_t idx) noexcept;
         void link_back(Level& level, std::uint32_t idx) noexcept;
         void unlink(Level& level, std::uint32_t idx) noexcept;
+        [[nodiscard]] std::expected<void, RejectReason> apply_modify(OrderId id, std::uint32_t idx,
+                                                                     Price newPrice, Quantity newQty,
+                                                                     Sequence newSeq);
     };
 
 }

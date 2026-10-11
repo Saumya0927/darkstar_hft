@@ -33,6 +33,7 @@ struct BatchResult {
     BookDepth atStart{};
     BookDepth atEnd{};
     CounterSample counters{};
+    std::uint64_t tailInserts{};
 };
 
 struct TailResult {

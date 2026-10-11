@@ -9,7 +9,7 @@ namespace dhft {
 
     enum class EventType    : std::uint8_t { NewOrder, Cancel, Modify };
     enum class OutKind      : std::uint8_t { Trade, Ack, Reject };
-    enum class RejectReason : std::uint8_t { None, UnknownOrder, BadQuantity, DuplicateOrderId };
+    enum class RejectReason : std::uint8_t { None, UnknownOrder, BadQuantity, DuplicateOrderId, BadPrice };
 
     struct InEvent {
         EventType type{}; OrderId id{}; Side side{}; Price price{}; Quantity qty{};

@@ -16,6 +16,8 @@ const char* reason_text(RejectReason r) {
         return "BAD_QUANTITY";
     case RejectReason::DuplicateOrderId:
         return "DUPLICATE_ORDER_ID";
+    case RejectReason::BadPrice:
+        return "BAD_PRICE";
     }
     return "?";
 }

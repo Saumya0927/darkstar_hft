@@ -198,3 +198,102 @@ TEST(OrderBook, AcceptsOrderIdsWiderThanThirtyTwoBits) {
   EXPECT_FALSE(b.contains(wide));
   EXPECT_TRUE(b.validate().has_value());
 }
+
+TEST(OrderBook, AddRejectsPriceOutsideThirtyTwoBits) {
+  OrderBook b;
+  const std::int64_t wide = std::int64_t{1} << 40;
+  auto r = b.add(Order{OrderId{1}, Side::Buy, Price{wide}, Quantity{5}, Sequence{1}});
+  ASSERT_FALSE(r.has_value());
+  EXPECT_EQ(r.error(), RejectReason::BadPrice);
+  r = b.add(Order{OrderId{1}, Side::Buy, Price{-wide}, Quantity{5}, Sequence{1}});
+  ASSERT_FALSE(r.has_value());
+  EXPECT_EQ(r.error(), RejectReason::BadPrice);
+  EXPECT_FALSE(b.contains(OrderId{1}));
+  EXPECT_TRUE(b.validate().has_value());
+}
+
+TEST(OrderBook, AddRejectsQuantityOutsideThirtyTwoBits) {
+  OrderBook b;
+  auto r = b.add(Order{OrderId{1}, Side::Buy, Price{100}, Quantity{std::int64_t{1} << 40}, Sequence{1}});
+  ASSERT_FALSE(r.has_value());
+  EXPECT_EQ(r.error(), RejectReason::BadQuantity);
+  EXPECT_FALSE(b.contains(OrderId{1}));
+  EXPECT_TRUE(b.validate().has_value());
+}
+
+TEST(OrderBook, ModifyRejectsQuantityOutsideThirtyTwoBits) {
+  OrderBook b;
+  ASSERT_TRUE(b.add(Order{OrderId{1}, Side::Buy, Price{100}, Quantity{5}, Sequence{1}}).has_value());
+  auto r = b.modify(OrderId{1}, Quantity{std::int64_t{1} << 40}, Sequence{2});
+  ASSERT_FALSE(r.has_value());
+  EXPECT_EQ(r.error(), RejectReason::BadQuantity);
+  EXPECT_EQ(b.front_at(Side::Buy, Price{100})->qty.v, 5);
+}
+
+TEST(OrderBook, ModifyToNewPriceMovesTheOrderAndLosesPriority) {
+  OrderBook b;
+  ASSERT_TRUE(b.add(Order{OrderId{1}, Side::Buy, Price{100}, Quantity{5}, Sequence{1}}).has_value());
+  ASSERT_TRUE(b.add(Order{OrderId{2}, Side::Buy, Price{101}, Quantity{3}, Sequence{2}}).has_value());
+  ASSERT_TRUE(b.modify(OrderId{1}, Price{101}, Quantity{5}, Sequence{3}).has_value());
+  ASSERT_TRUE(b.validate().has_value()) << b.validate().error();
+  EXPECT_FALSE(b.front_at(Side::Buy, Price{100}).has_value());
+  ASSERT_TRUE(b.front_at(Side::Buy, Price{101}).has_value());
+  EXPECT_EQ(b.front_at(Side::Buy, Price{101})->id.v, 2u);
+  const auto first = b.take_from_front(Side::Buy, Price{101}, Quantity{3});
+  ASSERT_TRUE(first.has_value());
+  EXPECT_EQ(first->restingId.v, 2u);
+  const auto second = b.take_from_front(Side::Buy, Price{101}, Quantity{5});
+  ASSERT_TRUE(second.has_value());
+  EXPECT_EQ(second->restingId.v, 1u);
+  EXPECT_TRUE(second->levelEmptied);
+  EXPECT_FALSE(b.best_bid().has_value());
+  EXPECT_TRUE(b.validate().has_value());
+}
+
+TEST(OrderBook, ModifyToNewPriceCarriesTheNewQuantityAndSequence) {
+  OrderBook b;
+  ASSERT_TRUE(b.add(Order{OrderId{1}, Side::Sell, Price{105}, Quantity{5}, Sequence{1}}).has_value());
+  ASSERT_TRUE(b.modify(OrderId{1}, Price{103}, Quantity{2}, Sequence{7}).has_value());
+  const auto o = b.front_at(Side::Sell, Price{103});
+  ASSERT_TRUE(o.has_value());
+  EXPECT_EQ(o->id.v, 1u);
+  EXPECT_EQ(o->qty.v, 2);
+  EXPECT_EQ(o->seq.v, 7u);
+  EXPECT_EQ(b.best_ask()->ticks, 103);
+  EXPECT_TRUE(b.validate().has_value());
+}
+
+TEST(OrderBook, ModifyAtSamePriceThroughTheFourArgOverloadKeepsPlaceOnDecrease) {
+  OrderBook b;
+  ASSERT_TRUE(b.add(Order{OrderId{1}, Side::Buy, Price{100}, Quantity{5}, Sequence{1}}).has_value());
+  ASSERT_TRUE(b.add(Order{OrderId{2}, Side::Buy, Price{100}, Quantity{5}, Sequence{2}}).has_value());
+  ASSERT_TRUE(b.modify(OrderId{1}, Price{100}, Quantity{2}, Sequence{9}).has_value());
+  EXPECT_EQ(b.front_at(Side::Buy, Price{100})->id.v, 1u);
+  EXPECT_EQ(b.front_at(Side::Buy, Price{100})->seq.v, 1u);
+  EXPECT_TRUE(b.validate().has_value());
+}
+
+TEST(OrderBook, ModifyToNewPriceRejectsBadInputs) {
+  OrderBook b;
+  ASSERT_TRUE(b.add(Order{OrderId{1}, Side::Buy, Price{100}, Quantity{5}, Sequence{1}}).has_value());
+  EXPECT_EQ(b.modify(OrderId{1}, Price{std::int64_t{1} << 40}, Quantity{5}, Sequence{2}).error(),
+            RejectReason::BadPrice);
+  EXPECT_EQ(b.modify(OrderId{1}, Price{101}, Quantity{0}, Sequence{2}).error(), RejectReason::BadQuantity);
+  EXPECT_EQ(b.modify(OrderId{9}, Price{101}, Quantity{5}, Sequence{2}).error(), RejectReason::UnknownOrder);
+  EXPECT_EQ(b.front_at(Side::Buy, Price{100})->id.v, 1u);
+  EXPECT_TRUE(b.validate().has_value());
+}
+
+TEST(OrderBook, TailInsertsCountOnlyOutOfBandLevels) {
+  OrderBook b{16, Price{100}, Price{110}};
+  EXPECT_EQ(b.tail_inserts(), 0u);
+  ASSERT_TRUE(b.add(Order{OrderId{1}, Side::Buy, Price{105}, Quantity{1}, Sequence{1}}).has_value());
+  ASSERT_TRUE(b.add(Order{OrderId{2}, Side::Buy, Price{105}, Quantity{1}, Sequence{2}}).has_value());
+  EXPECT_EQ(b.tail_inserts(), 0u);
+  ASSERT_TRUE(b.add(Order{OrderId{3}, Side::Sell, Price{500}, Quantity{1}, Sequence{3}}).has_value());
+  ASSERT_TRUE(b.add(Order{OrderId{4}, Side::Buy, Price{-5}, Quantity{1}, Sequence{4}}).has_value());
+  EXPECT_EQ(b.tail_inserts(), 2u);
+  ASSERT_TRUE(b.cancel(OrderId{3}).has_value());
+  ASSERT_TRUE(b.add(Order{OrderId{5}, Side::Sell, Price{500}, Quantity{1}, Sequence{5}}).has_value());
+  EXPECT_EQ(b.tail_inserts(), 3u);
+}

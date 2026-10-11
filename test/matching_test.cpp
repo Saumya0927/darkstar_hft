@@ -3,6 +3,8 @@
 #include <dhft/Sink.h>
 #include <gtest/gtest.h>
 
+#include <cstdint>
+
 using namespace dhft;
 
 namespace {
@@ -183,4 +185,38 @@ TEST(Matching, IdIsReusableAfterCancel) {
   EXPECT_EQ(s.all().back().kind, OutKind::Ack);
   ASSERT_TRUE(e.book().best_bid());
   EXPECT_EQ(e.book().best_bid()->ticks, 101);
+}
+
+TEST(Matching, OutOfRangePriceIsRejectedBeforeItCanMatch) {
+  CollectingSink s;
+  MatchingEngine e{s};
+  e.process(InEvent::new_order(OrderId{1}, Side::Sell, Price{100}, Quantity{5}));
+  e.process(InEvent::new_order(OrderId{2}, Side::Buy, Price{std::int64_t{1} << 40}, Quantity{5}));
+  ASSERT_EQ(s.all().size(), 2u);
+  EXPECT_EQ(s.all()[1].kind, OutKind::Reject);
+  EXPECT_EQ(s.all()[1].reason, RejectReason::BadPrice);
+  EXPECT_TRUE(s.trades().empty());
+  EXPECT_EQ(e.book().total_quantity(Side::Sell).v, 5);
+  EXPECT_FALSE(e.book().contains(OrderId{2}));
+}
+
+TEST(Matching, OutOfRangeQuantityIsRejectedBeforeItCanMatch) {
+  CollectingSink s;
+  MatchingEngine e{s};
+  e.process(InEvent::new_order(OrderId{1}, Side::Sell, Price{100}, Quantity{5}));
+  e.process(InEvent::new_order(OrderId{2}, Side::Buy, Price{100}, Quantity{std::int64_t{1} << 40}));
+  ASSERT_EQ(s.all().size(), 2u);
+  EXPECT_EQ(s.all()[1].reason, RejectReason::BadQuantity);
+  EXPECT_TRUE(s.trades().empty());
+  EXPECT_EQ(e.book().total_quantity(Side::Sell).v, 5);
+}
+
+TEST(Matching, OutOfRangeModifyQuantityIsRejected) {
+  CollectingSink s;
+  MatchingEngine e{s};
+  e.process(InEvent::new_order(OrderId{1}, Side::Sell, Price{100}, Quantity{5}));
+  e.process(InEvent::modify(OrderId{1}, Quantity{std::int64_t{1} << 40}));
+  ASSERT_EQ(s.all().size(), 2u);
+  EXPECT_EQ(s.all()[1].reason, RejectReason::BadQuantity);
+  EXPECT_EQ(e.book().total_quantity(Side::Sell).v, 5);
 }

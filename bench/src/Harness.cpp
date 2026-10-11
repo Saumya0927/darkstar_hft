@@ -66,6 +66,7 @@ BatchResult run_batch(const std::vector<InEvent>& script, std::size_t warmup,
     r.nsPerEvent = r.events == 0 ? 0.0 : r.totalNs / static_cast<double>(r.events);
     r.checksum = sink.value();
     r.atEnd = measure_depth(engine.book());
+    r.tailInserts = engine.book().tail_inserts();
     return r;
 }
 

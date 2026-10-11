@@ -2,6 +2,9 @@
 #include <dhft/Check.h>
 #include <dhft/MatchingEngine.h>
 
+#include <cstdint>
+#include <utility>
+
 namespace dhft {
 
     MatchingEngine::MatchingEngine(Sink& sink) noexcept : sink_{sink} {}
@@ -11,8 +14,12 @@ namespace dhft {
     void MatchingEngine::process(const InEvent& e) noexcept {
         switch (e.type) {
             case EventType::NewOrder: {
-                if (!e.qty.positive()) {
+                if (!e.qty.positive() || !std::in_range<std::int32_t>(e.qty.v)) {
                     sink_.on_event(OutEvent::reject(e.id, RejectReason::BadQuantity));
+                    break;
+                }
+                if (!std::in_range<std::int32_t>(e.price.ticks)) {
+                    sink_.on_event(OutEvent::reject(e.id, RejectReason::BadPrice));
                     break;
                 }
                 if (book_.contains(e.id)) {

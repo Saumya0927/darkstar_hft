@@ -215,6 +215,10 @@ int main(int argc, char** argv) {
     std::printf("book depth: entering %zu qty / %zu levels   leaving %zu qty / %zu levels\n\n",
                 lastBatch.atStart.quantity, lastBatch.atStart.levels, lastBatch.atEnd.quantity,
                 lastBatch.atEnd.levels);
+    if (lastBatch.tailInserts != 0) {
+        std::printf("WARNING: %llu order inserts fell outside the ladder band into the map tail\n\n",
+                    static_cast<unsigned long long>(lastBatch.tailInserts));
+    }
 
     std::printf("throughput (batch timing -- the only valid median)\n");
     std::printf("  ns/event   median %7.2f   min %7.2f   max %7.2f   spread %.1f%%\n",

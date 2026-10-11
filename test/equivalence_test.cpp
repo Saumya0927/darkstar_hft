@@ -285,3 +285,17 @@ TEST(Equivalence, AgreesOnModifyAndCancelRejectPaths) {
   };
   expectSameStream(script, "modify/cancel reject paths");
 }
+
+TEST(Equivalence, AgreesOnOutOfRangePricesAndQuantities) {
+  const std::int64_t wide = std::int64_t{1} << 40;
+  const std::vector<InEvent> script{
+      InEvent::new_order(OrderId{1}, Side::Sell, Price{100}, Quantity{5}),
+      InEvent::new_order(OrderId{2}, Side::Buy, Price{wide}, Quantity{5}),
+      InEvent::new_order(OrderId{3}, Side::Buy, Price{-wide}, Quantity{5}),
+      InEvent::new_order(OrderId{4}, Side::Buy, Price{100}, Quantity{wide}),
+      InEvent::new_order(OrderId{1}, Side::Buy, Price{wide}, Quantity{5}),
+      InEvent::modify(OrderId{1}, Quantity{wide}),
+      InEvent::new_order(OrderId{5}, Side::Buy, Price{100}, Quantity{2}),
+  };
+  expectSameStream(script, "out-of-range inputs");
+}

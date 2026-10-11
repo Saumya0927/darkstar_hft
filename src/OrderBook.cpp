@@ -19,12 +19,12 @@ namespace dhft {
     }
 
     std::expected<void, RejectReason> OrderBook::add(const Order& o) {
-        if (!o.qty.positive()) {
+        if (!o.qty.positive() || !std::in_range<std::int32_t>(o.qty.v)) {
             return std::unexpected(RejectReason::BadQuantity);
         }
-
-        DHFT_CHECK_MSG(std::in_range<std::int32_t>(o.price.ticks), "price does not fit in 32 bits");
-        DHFT_CHECK_MSG(std::in_range<std::int32_t>(o.qty.v), "quantity does not fit in 32 bits");
+        if (!std::in_range<std::int32_t>(o.price.ticks)) {
+            return std::unexpected(RejectReason::BadPrice);
+        }
         DHFT_CHECK_MSG(std::in_range<std::uint32_t>(o.seq.v), "sequence does not fit in 32 bits");
 
         const std::uint32_t idx = alloc_slot();
@@ -129,7 +129,7 @@ namespace dhft {
     }
 
     std::expected<void, RejectReason> OrderBook::modify(OrderId id, Quantity newQty, Sequence newSeq) {
-        if (!newQty.positive())
+        if (!newQty.positive() || !std::in_range<std::int32_t>(newQty.v))
             return std::unexpected(RejectReason::BadQuantity);
 
         auto it = index_.find(id);
@@ -138,17 +138,35 @@ namespace dhft {
 
         const std::uint32_t idx = it->second;
         DHFT_DCHECK(idx < pool_.size());
+        return apply_modify(id, idx, Price{pool_[idx].price}, newQty, newSeq);
+    }
 
-        if (newQty <= Quantity{pool_[idx].qty}) {
+    std::expected<void, RejectReason> OrderBook::modify(OrderId id, Price newPrice, Quantity newQty,
+                                                        Sequence newSeq) {
+        if (!newQty.positive() || !std::in_range<std::int32_t>(newQty.v))
+            return std::unexpected(RejectReason::BadQuantity);
+        if (!std::in_range<std::int32_t>(newPrice.ticks))
+            return std::unexpected(RejectReason::BadPrice);
+
+        auto it = index_.find(id);
+        if (it == index_.end())
+            return std::unexpected(RejectReason::UnknownOrder);
+
+        const std::uint32_t idx = it->second;
+        DHFT_DCHECK(idx < pool_.size());
+        return apply_modify(id, idx, newPrice, newQty, newSeq);
+    }
+
+    std::expected<void, RejectReason> OrderBook::apply_modify(OrderId id, std::uint32_t idx,
+                                                              Price newPrice, Quantity newQty,
+                                                              Sequence newSeq) {
+        const Price curPrice{pool_[idx].price};
+        if (newPrice == curPrice && newQty <= Quantity{pool_[idx].qty}) {
             pool_[idx].qty = static_cast<std::int32_t>(newQty.v);
             return {};
         }
 
-        const Order updated{id,
-                            static_cast<Side>(pool_[idx].side),
-                            Price{pool_[idx].price},
-                            newQty,
-                            newSeq};
+        const Order updated{id, static_cast<Side>(pool_[idx].side), newPrice, newQty, newSeq};
         (void)cancel(id);
         const auto readded = add(updated);
         DHFT_CHECK_MSG(readded.has_value(), "re-adding a just-cancelled order must succeed");
@@ -171,6 +189,10 @@ namespace dhft {
                          Sequence{s.seq}};
         };
         return (side == Side::Buy) ? lookup(bids_) : lookup(asks_);
+    }
+
+    std::uint64_t OrderBook::tail_inserts() const noexcept {
+        return bids_.tail_inserts() + asks_.tail_inserts();
     }
 
     Quantity OrderBook::total_quantity(Side side) const noexcept {

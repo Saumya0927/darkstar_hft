@@ -1038,3 +1038,57 @@ level. If there is a cost it is under about 3%, the resolution of this run.
 
 Correctness: the new test aborts on the previous engine (width check fires) and passes on
 this one. 173/173 in three configs, goldens byte-identical, checksum unchanged, zero leaks.
+
+---
+
+## Pre-feed engine fixes: rejections instead of aborts, price-changing modify, band visibility
+
+Three changes that have to land before a real feed touches the engine.
+
+**Rejections instead of aborts.** `add()` used to `abort()` on a price or quantity wider than
+32 bits. A live engine must reject a bad order, not die. Both are now `RejectReason`
+returns, with a new `BadPrice` reason. The subtle part: validation moved to the front of
+`MatchingEngine::process`, before matching. Without that, an order with a bad price would
+fill against the book first and then trip the "residual must rest" invariant. The oracle
+engine applies the identical rules in the identical order, so the equivalence driver
+covers it.
+
+**Price-changing modify.** CME can move a resting order to a new price in one update,
+keeping the id. New overload `modify(id, newPrice, newQty, newSeq)`: a price change is a
+cancel plus re-add with the new sequence, so the order loses queue priority, which is the
+exchange's rule. Same price falls through to the existing quantity logic.
+
+**Band visibility.** `PriceLadder` now counts inserts that fall outside the band into the
+map tail, surfaced as `OrderBook::tail_inserts()` and printed by `bench` as a warning when
+nonzero. Tested by running the benchmark at prices 20000 to 20100 against the default band:
+149,876 inserts went to the slow path on a run that previously degraded in total silence.
+
+### Mutation testing, five mutants
+
+| mutant | caught by |
+|---|---|
+| drop the price check from `process()` | matching_test: bad price matched first, invariant tripped |
+| price-change modify keeps the old sequence | orderbook_test, via `validate()`: "sequence is not ascending" |
+| stop counting tail inserts | orderbook_test |
+| oracle accepts a bad price | equivalence_test: streams diverge |
+| re-add with the old sequence, first attempt | **not caught** until the test was fixed, see below |
+
+The second mutant initially passed. Queue order inside a level is physical list position,
+so a stale sequence still sorted correctly; only `validate()` can see the inconsistency,
+and the test called it after the level was already emptied. Moving the `validate()` call
+to immediately after the modify made the mutant fail. A test that has not been watched to
+fail has not been tested; this one proved it again.
+
+### Cost
+
+Eight alternating runs against the pre-change binary:
+
+```
+before   25.90 ns   [25.81, 28.37]
+after    25.97 ns   [25.85, 26.58]
+change   +0.3%   U=39   p=0.505   not significant
+```
+
+Two range checks per new order are invisible at this resolution.
+
+185/185 in three configs, goldens byte-identical, checksum dc015ae88f2b6dd0, zero leaks.

@@ -141,6 +141,7 @@ TEST(Generator, ReachesEveryRejectReason) {
     case RejectReason::UnknownOrder: ++unknown; break;
     case RejectReason::BadQuantity: ++badQty; break;
     case RejectReason::DuplicateOrderId: ++duplicate; break;
+    case RejectReason::BadPrice: break;
     case RejectReason::None: break;
     }
   }

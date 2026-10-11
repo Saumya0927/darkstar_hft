@@ -60,8 +60,11 @@ namespace dhft {
                 }
                 return levels_[i];
             }
+            ++tailInserts_;
             return tail_[p];
         }
+
+        [[nodiscard]] std::uint64_t tail_inserts() const noexcept { return tailInserts_; }
 
         [[nodiscard]] std::optional<Price> best() const noexcept {
             const bool haveArray = bestIdx_ != kNone;
@@ -196,6 +199,7 @@ namespace dhft {
         static constexpr std::size_t kNone = std::numeric_limits<std::size_t>::max();
         std::size_t bestIdx_{kNone};
         std::map<Price, LevelT, TailCmp> tail_;
+        std::uint64_t tailInserts_{0};
 
         void set(std::size_t i) noexcept { occupied_[i / 64] |= 1ULL << (i % 64); }
         void clear(std::size_t i) noexcept { occupied_[i / 64] &= ~(1ULL << (i % 64)); }

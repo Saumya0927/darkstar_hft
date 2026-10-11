@@ -1,6 +1,8 @@
 #include <dhft/reference/NaiveEngine.h>
 
 #include <algorithm>
+#include <cstdint>
+#include <utility>
 
 namespace dhft::reference {
 
@@ -91,8 +93,12 @@ std::size_t NaiveEngine::front_at(Side side, Price price) const noexcept {
 void NaiveEngine::process(const InEvent& e) noexcept {
     switch (e.type) {
     case EventType::NewOrder: {
-        if (!e.qty.positive()) {
+        if (!e.qty.positive() || !std::in_range<std::int32_t>(e.qty.v)) {
             sink_.on_event(OutEvent::reject(e.id, RejectReason::BadQuantity));
+            break;
+        }
+        if (!std::in_range<std::int32_t>(e.price.ticks)) {
+            sink_.on_event(OutEvent::reject(e.id, RejectReason::BadPrice));
             break;
         }
         if (contains(e.id)) {
@@ -115,7 +121,7 @@ void NaiveEngine::process(const InEvent& e) noexcept {
         break;
     }
     case EventType::Modify: {
-        if (!e.qty.positive()) {
+        if (!e.qty.positive() || !std::in_range<std::int32_t>(e.qty.v)) {
             sink_.on_event(OutEvent::reject(e.id, RejectReason::BadQuantity));
             break;
         }
